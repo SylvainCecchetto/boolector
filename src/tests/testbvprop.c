@@ -25,10 +25,9 @@
 
 static BtorMemMgr *g_mm;
 
-#define TEST_BW 3
-#define TEST_NUM_CONSTS 27
-#define TEST_CONST_LEN (TEST_BW + 1)
-char g_consts[TEST_NUM_CONSTS][TEST_CONST_LEN] = {0};
+char **g_consts     = NULL;
+size_t g_bw         = 0;
+size_t g_num_consts = 1;
 
 /*------------------------------------------------------------------------*/
 
@@ -64,19 +63,29 @@ char g_consts[TEST_NUM_CONSTS][TEST_CONST_LEN] = {0};
 
 /*------------------------------------------------------------------------*/
 
+/* Initialize all possible values for 3-valued constants of bit-width bw */
 void
-init_bvprop_tests (void)
+generate_consts (uint32_t bw)
 {
-  g_mm = btor_mem_mgr_new ();
+  assert (bw);
+  assert (!g_consts);
+  assert (!g_bw);
 
-  /* Initialize all possible values for 3-valued constants of bit-width
-   * TEST_BW. */
   char bit     = '0';
-  size_t psize = TEST_NUM_CONSTS;
-  for (size_t i = 0; i < TEST_BW; i++)
+  size_t psize;
+
+  g_bw = bw;
+  for (size_t i = 0; i < g_bw; i++) g_num_consts *= 3;
+  psize = g_num_consts;
+
+  BTOR_NEWN (g_mm, g_consts, g_num_consts);
+  for (size_t i = 0; i < g_num_consts; i++)
+    BTOR_CNEWN (g_mm, g_consts[i], g_bw + 1);
+
+  for (size_t i = 0; i < g_bw; i++)
   {
     psize = psize / 3;
-    for (size_t j = 0; j < TEST_NUM_CONSTS; j++)
+    for (size_t j = 0; j < g_num_consts; j++)
     {
       g_consts[j][i] = bit;
       if ((j + 1) % psize == 0)
@@ -85,6 +94,27 @@ init_bvprop_tests (void)
       }
     }
   }
+}
+
+void
+free_consts ()
+{
+  assert (g_bw);
+  assert (g_consts);
+  for (size_t i = 0; i < g_num_consts; i++)
+    BTOR_DELETEN (g_mm, g_consts[i], g_bw + 1);
+  BTOR_DELETEN (g_mm, g_consts, g_num_consts);
+  g_num_consts = 1;
+  g_consts     = 0;
+  g_bw         = 0;
+}
+
+/*------------------------------------------------------------------------*/
+
+void
+init_bvprop_tests (void)
+{
+  g_mm = btor_mem_mgr_new ();
 }
 
 char *
@@ -121,17 +151,14 @@ print_domain (BtorBvDomain *d, bool print_short)
         }
       }
     }
-    printf ("%s\n", lo);
     btor_mem_freestr (g_mm, hi);
     btor_mem_freestr (g_mm, lo);
   }
   else
   {
     char *s = btor_bv_to_char (g_mm, d->lo);
-    printf ("lo: %s, ", s);
     btor_mem_freestr (g_mm, s);
     s = btor_bv_to_char (g_mm, d->hi);
-    printf ("hi: %s\n", s);
     btor_mem_freestr (g_mm, s);
   }
 }
@@ -694,15 +721,17 @@ test_new_init_domain_bvprop ()
 }
 
 void
-test_eq_bvprop ()
+eq_bvprop (uint32_t bw)
 {
   char *str_z;
   BtorBvDomain *d_x, *d_y, *res_xy, *res_z;
 
-  for (size_t i = 0; i < TEST_NUM_CONSTS; i++)
+  generate_consts (bw);
+
+  for (size_t i = 0; i < g_num_consts; i++)
   {
     d_x = create_domain (g_consts[i]);
-    for (size_t j = 0; j < TEST_NUM_CONSTS; j++)
+    for (size_t j = 0; j < g_num_consts; j++)
     {
       d_y = create_domain (g_consts[j]);
       (void) btor_bvprop_eq (g_mm, d_x, d_y, &res_xy, &res_z);
@@ -737,19 +766,22 @@ test_eq_bvprop ()
     }
     btor_bvprop_free (g_mm, d_x);
   }
+  free_consts ();
 }
 
 void
-test_not_bvprop ()
+not_bvprop (uint32_t bw)
 {
   bool res;
   BtorBvDomain *d_x, *d_z, *res_x, *res_z;
 
-  for (size_t i = 0; i < TEST_NUM_CONSTS; i++)
+  generate_consts (bw);
+
+  for (size_t i = 0; i < g_num_consts; i++)
   {
     d_x = create_domain (g_consts[i]);
 
-    for (size_t j = 0; j < TEST_NUM_CONSTS; j++)
+    for (size_t j = 0; j < g_num_consts; j++)
     {
       d_z = create_domain (g_consts[j]);
       res = btor_bvprop_not (g_mm, d_x, d_z, &res_x, &res_z);
@@ -786,7 +818,7 @@ test_not_bvprop ()
       {
         assert (!res);
         bool valid = true;
-        for (size_t k = 0; k < TEST_BW && valid; k++)
+        for (size_t k = 0; k < g_bw && valid; k++)
         {
           if (g_consts[i][k] != 'x' && g_consts[i][k] == g_consts[j][k])
           {
@@ -800,10 +832,11 @@ test_not_bvprop ()
     }
     btor_bvprop_free (g_mm, d_x);
   }
+  free_consts ();
 }
 
 static void
-test_shift_const_bvprop_aux (bool is_srl)
+shift_const_bvprop_aux (uint32_t bw, bool is_srl)
 {
   bool res;
   size_t i, j;
@@ -811,16 +844,18 @@ test_shift_const_bvprop_aux (bool is_srl)
   BtorBitVector *bv_n;
   BtorBvDomain *d_x, *d_y, *d_z, *res_x, *res_z;
 
-  for (i = 0; i < TEST_NUM_CONSTS; i++)
+  generate_consts (bw);
+
+  for (i = 0; i < g_num_consts; i++)
   {
     d_z = create_domain (g_consts[i]);
-    for (j = 0; j < TEST_NUM_CONSTS; j++)
+    for (j = 0; j < g_num_consts; j++)
     {
       d_x = create_domain (g_consts[j]);
 
-      for (n = 0; n < TEST_BW + 1; n++)
+      for (n = 0; n < g_bw + 1; n++)
       {
-        bv_n = btor_bv_uint64_to_bv (g_mm, n, TEST_BW);
+        bv_n = btor_bv_uint64_to_bv (g_mm, n, g_bw);
         d_y  = btor_bvprop_new (g_mm, bv_n, bv_n);
         if (is_srl)
         {
@@ -881,18 +916,19 @@ test_shift_const_bvprop_aux (bool is_srl)
     }
     btor_bvprop_free (g_mm, d_z);
   }
+  free_consts (bw);
 }
 
 void
-test_sll_const_bvprop ()
+sll_const_bvprop (uint32_t bw)
 {
-  test_shift_const_bvprop_aux (false);
+  shift_const_bvprop_aux (bw, false);
 }
 
 void
-test_srl_const_bvprop ()
+srl_const_bvprop (uint32_t bw)
 {
-  test_shift_const_bvprop_aux (true);
+  shift_const_bvprop_aux (bw, true);
 }
 
 #define TEST_BVPROP_AND 0
@@ -900,19 +936,21 @@ test_srl_const_bvprop ()
 #define TEST_BVPROP_XOR 2
 
 void
-test_and_or_xor_bvprop_aux (int32_t op)
+and_or_xor_bvprop_aux (int32_t op, uint32_t bw)
 {
   bool res;
   BtorBvDomain *d_x, *d_y, *d_z;
   BtorBvDomain *res_x, *res_y, *res_z;
 
-  for (size_t i = 0; i < TEST_NUM_CONSTS; i++)
+  generate_consts (bw);
+
+  for (size_t i = 0; i < g_num_consts; i++)
   {
     d_z = create_domain (g_consts[i]);
-    for (size_t j = 0; j < TEST_NUM_CONSTS; j++)
+    for (size_t j = 0; j < g_num_consts; j++)
     {
       d_x = create_domain (g_consts[j]);
-      for (size_t k = 0; k < TEST_NUM_CONSTS; k++)
+      for (size_t k = 0; k < g_num_consts; k++)
       {
         d_y = create_domain (g_consts[k]);
 
@@ -991,7 +1029,7 @@ test_and_or_xor_bvprop_aux (int32_t op)
           assert (btor_bvprop_is_valid (g_mm, res_x));
           assert (btor_bvprop_is_valid (g_mm, res_y));
 
-          for (size_t l = 0; l < TEST_BW; l++)
+          for (size_t l = 0; l < g_bw; l++)
           {
             if (op == TEST_BVPROP_AND)
             {
@@ -1022,7 +1060,7 @@ test_and_or_xor_bvprop_aux (int32_t op)
         else
         {
           bool valid = true;
-          for (size_t l = 0; l < TEST_BW && valid; l++)
+          for (size_t l = 0; l < g_bw && valid; l++)
           {
             if ((op == TEST_BVPROP_AND
                  && ((g_consts[i][l] == '0' && g_consts[j][l] != '0'
@@ -1057,44 +1095,48 @@ test_and_or_xor_bvprop_aux (int32_t op)
     }
     btor_bvprop_free (g_mm, d_z);
   }
+  free_consts ();
 }
 
 void
-test_and_bvprop ()
+and_bvprop (uint32_t bw)
 {
-  test_and_or_xor_bvprop_aux (TEST_BVPROP_AND);
+  and_or_xor_bvprop_aux (TEST_BVPROP_AND, bw);
 }
 
 void
-test_or_bvprop ()
+or_bvprop (uint32_t bw)
 {
-  test_and_or_xor_bvprop_aux (TEST_BVPROP_OR);
+  and_or_xor_bvprop_aux (TEST_BVPROP_OR, bw);
 }
 
 void
-test_xor_bvprop ()
+xor_bvprop (uint32_t bw)
 {
-  test_and_or_xor_bvprop_aux (TEST_BVPROP_XOR);
+  and_or_xor_bvprop_aux (TEST_BVPROP_XOR, bw);
 }
 
 void
-test_slice_bvprop ()
+slice_bvprop (uint32_t bw)
 {
   bool res;
-  char buf[TEST_BW + 1];
+  char *buf;
   BtorBvDomain *d_x, *d_z, *res_x, *res_z;
 
-  for (size_t i = 0; i < TEST_NUM_CONSTS; i++)
+  generate_consts (bw);
+  BTOR_CNEWN (g_mm, buf, g_bw + 1);
+
+  for (size_t i = 0; i < g_num_consts; i++)
   {
     d_x = create_domain (g_consts[i]);
-    for (size_t j = 0; j < TEST_NUM_CONSTS; j++)
+    for (size_t j = 0; j < g_num_consts; j++)
     {
-      for (uint32_t lower = 0; lower < TEST_BW; lower++)
+      for (uint32_t lower = 0; lower < g_bw; lower++)
       {
-        for (uint32_t upper = lower; upper < TEST_BW; upper++)
+        for (uint32_t upper = lower; upper < g_bw; upper++)
         {
-          memset (buf, 0, sizeof (buf));
-          memcpy (buf, &g_consts[j][TEST_BW - 1 - upper], upper - lower + 1);
+          memset (buf, 0, g_bw + 1);
+          memcpy (buf, &g_consts[j][g_bw - 1 - upper], upper - lower + 1);
           assert (strlen (buf) > 0);
           assert (strlen (buf) == upper - lower + 1);
 
@@ -1133,7 +1175,7 @@ test_slice_bvprop ()
             char *str_res_z = from_domain (g_mm, res_z);
             for (size_t k = 0; k < upper - lower + 1; k++)
             {
-              assert (str_res_z[k] == str_res_x[TEST_BW - 1 - upper + k]);
+              assert (str_res_z[k] == str_res_x[g_bw - 1 - upper + k]);
             }
             btor_mem_freestr (g_mm, str_res_x);
             btor_mem_freestr (g_mm, str_res_z);
@@ -1142,9 +1184,9 @@ test_slice_bvprop ()
           {
             assert (!btor_bvprop_is_valid (g_mm, res_x));
             bool valid = true;
-            for (size_t k = 0; k < TEST_BW; k++)
+            for (size_t k = 0; k < g_bw; k++)
             {
-              if (buf[k] != g_consts[i][TEST_BW - 1 - upper + k])
+              if (buf[k] != g_consts[i][g_bw - 1 - upper + k])
               {
                 valid = false;
                 break;
@@ -1159,6 +1201,8 @@ test_slice_bvprop ()
     }
     btor_bvprop_free (g_mm, d_x);
   }
+  BTOR_DELETEN (g_mm, buf, g_bw + 1);
+  free_consts ();
 }
 
 #define TEST_PROPBV_CONCAT                                                  \
@@ -1204,36 +1248,38 @@ test_slice_bvprop ()
   } while (0)
 
 void
-test_concat_bvprop ()
+concat_bvprop (uint32_t bw)
 {
   bool res;
   size_t i, j, k;
   char *s_const;
   BtorBvDomain *d_x, *d_y, *d_z, *res_x, *res_y, *res_z;
 
-  for (i = 1; i < TEST_BW; i++)
+  generate_consts (bw);
+
+  for (i = 1; i < g_bw; i++)
   {
-    j = TEST_BW - i;
-    for (k = 0; k < TEST_NUM_CONSTS; k++)
+    j = g_bw - i;
+    for (k = 0; k < g_num_consts; k++)
     {
       d_x = btor_bvprop_new_init (g_mm, i);
       d_y = btor_bvprop_new_init (g_mm, j);
-      assert (i + j == TEST_BW);
-      d_z = btor_bvprop_new_init (g_mm, TEST_BW);
+      assert (i + j == g_bw);
+      d_z = btor_bvprop_new_init (g_mm, g_bw);
       TEST_PROPBV_CONCAT;
 
       s_const = slice_str_const (g_consts[k], 0, i - 1);
       d_x     = create_domain (s_const);
       btor_mem_freestr (g_mm, s_const);
       d_y = btor_bvprop_new_init (g_mm, j);
-      d_z = btor_bvprop_new_init (g_mm, TEST_BW);
+      d_z = btor_bvprop_new_init (g_mm, g_bw);
       TEST_PROPBV_CONCAT;
 
       d_x     = btor_bvprop_new_init (g_mm, i);
-      s_const = slice_str_const (g_consts[k], i, TEST_BW - 1);
+      s_const = slice_str_const (g_consts[k], i, g_bw - 1);
       d_y     = create_domain (s_const);
       btor_mem_freestr (g_mm, s_const);
-      d_z = btor_bvprop_new_init (g_mm, TEST_BW);
+      d_z = btor_bvprop_new_init (g_mm, g_bw);
       TEST_PROPBV_CONCAT;
 
       d_x = btor_bvprop_new_init (g_mm, i);
@@ -1244,10 +1290,10 @@ test_concat_bvprop ()
       s_const = slice_str_const (g_consts[k], 0, i - 1);
       d_x     = create_domain (s_const);
       btor_mem_freestr (g_mm, s_const);
-      s_const = slice_str_const (g_consts[k], i, TEST_BW - 1);
+      s_const = slice_str_const (g_consts[k], i, g_bw - 1);
       d_y     = create_domain (s_const);
       btor_mem_freestr (g_mm, s_const);
-      d_z = btor_bvprop_new_init (g_mm, TEST_BW);
+      d_z = btor_bvprop_new_init (g_mm, g_bw);
       TEST_PROPBV_CONCAT;
 
       s_const = slice_str_const (g_consts[k], 0, i - 1);
@@ -1258,7 +1304,7 @@ test_concat_bvprop ()
       TEST_PROPBV_CONCAT;
 
       d_x     = btor_bvprop_new_init (g_mm, i);
-      s_const = slice_str_const (g_consts[k], i, TEST_BW - 1);
+      s_const = slice_str_const (g_consts[k], i, g_bw - 1);
       d_y     = create_domain (s_const);
       btor_mem_freestr (g_mm, s_const);
       d_z = create_domain (g_consts[k]);
@@ -1267,29 +1313,32 @@ test_concat_bvprop ()
       s_const = slice_str_const (g_consts[k], 0, i - 1);
       d_x     = create_domain (s_const);
       btor_mem_freestr (g_mm, s_const);
-      s_const = slice_str_const (g_consts[k], i, TEST_BW - 1);
+      s_const = slice_str_const (g_consts[k], i, g_bw - 1);
       d_y     = create_domain (s_const);
       btor_mem_freestr (g_mm, s_const);
       d_z = create_domain (g_consts[k]);
       TEST_PROPBV_CONCAT;
     }
   }
+  free_consts ();
 }
 
 void
-test_sext_bvprop ()
+sext_bvprop (uint32_t bw)
 {
   bool res;
   size_t i, j;
   uint32_t n;
   BtorBvDomain *d_x, *d_z, *res_x, *res_z;
 
-  for (i = 0; i < TEST_NUM_CONSTS; i++)
+  generate_consts (bw);
+
+  for (i = 0; i < g_num_consts; i++)
   {
     d_z = create_domain (g_consts[i]);
-    for (j = 0; j < TEST_NUM_CONSTS; j++)
+    for (j = 0; j < g_num_consts; j++)
     {
-      for (n = 1; n < TEST_BW; n++)
+      for (n = 1; n < g_bw; n++)
       {
         d_x = create_domain (g_consts[j] + n);
         res = btor_bvprop_sext (g_mm, d_x, d_z, &res_x, &res_z);
@@ -1322,15 +1371,18 @@ test_sext_bvprop ()
     }
     btor_bvprop_free (g_mm, d_z);
   }
+  free_consts ();
 }
 
 void
-test_ite_bvprop ()
+ite_bvprop (uint32_t bw)
 {
   bool res;
   BtorBitVector *tmp;
   BtorBvDomain *d_c, *d_x, *d_y, *d_z;
   BtorBvDomain *res_c, *res_x, *res_y, *res_z;
+
+  generate_consts (bw);
 
   for (size_t c = 0; c < 3; c++)
   {
@@ -1345,13 +1397,13 @@ test_ite_bvprop ()
       btor_bv_free (g_mm, tmp);
     }
 
-    for (size_t i = 0; i < TEST_NUM_CONSTS; i++)
+    for (size_t i = 0; i < g_num_consts; i++)
     {
       d_z = create_domain (g_consts[i]);
-      for (size_t j = 0; j < TEST_NUM_CONSTS; j++)
+      for (size_t j = 0; j < g_num_consts; j++)
       {
         d_x = create_domain (g_consts[j]);
-        for (size_t k = 0; k < TEST_NUM_CONSTS; k++)
+        for (size_t k = 0; k < g_num_consts; k++)
         {
           d_y = create_domain (g_consts[k]);
 
@@ -1384,23 +1436,26 @@ test_ite_bvprop ()
     }
     btor_bvprop_free (g_mm, d_c);
   }
+  free_consts ();
 }
 
 void
-test_add_bvprop ()
+add_bvprop (uint32_t bw)
 {
   bool res;
   BtorBitVector *tmp;
   BtorBvDomain *d_x, *d_y, *d_z;
   BtorBvDomain *res_x, *res_y, *res_z;
 
-  for (size_t i = 0; i < TEST_NUM_CONSTS; i++)
+  generate_consts (bw);
+
+  for (size_t i = 0; i < g_num_consts; i++)
   {
     d_z = create_domain (g_consts[i]);
-    for (size_t j = 0; j < TEST_NUM_CONSTS; j++)
+    for (size_t j = 0; j < g_num_consts; j++)
     {
       d_x = create_domain (g_consts[j]);
-      for (size_t k = 0; k < TEST_NUM_CONSTS; k++)
+      for (size_t k = 0; k < g_num_consts; k++)
       {
         d_y = create_domain (g_consts[k]);
 
@@ -1457,23 +1512,26 @@ test_add_bvprop ()
     }
     btor_bvprop_free (g_mm, d_z);
   }
+  free_consts ();
 }
 
 void
-test_mul_bvprop ()
+mul_bvprop (uint32_t bw)
 {
   bool res;
   BtorBitVector *tmp;
   BtorBvDomain *d_x, *d_y, *d_z;
   BtorBvDomain *res_x, *res_y, *res_z;
 
-  for (size_t i = 0; i < TEST_NUM_CONSTS; i++)
+  generate_consts (bw);
+
+  for (size_t i = 0; i < g_num_consts; i++)
   {
     d_z = create_domain (g_consts[i]);
-    for (size_t j = 0; j < TEST_NUM_CONSTS; j++)
+    for (size_t j = 0; j < g_num_consts; j++)
     {
       d_x = create_domain (g_consts[j]);
-      for (size_t k = 0; k < TEST_NUM_CONSTS; k++)
+      for (size_t k = 0; k < g_num_consts; k++)
       {
         d_y = create_domain (g_consts[k]);
 
@@ -1531,7 +1589,87 @@ test_mul_bvprop ()
     }
     btor_bvprop_free (g_mm, d_z);
   }
+  free_consts ();
 }
+
+void
+test_eq_bvprop ()
+{
+  eq_bvprop (3);
+}
+
+void
+test_not_bvprop ()
+{
+  not_bvprop (3);
+}
+
+void
+test_sll_const_bvprop ()
+{
+  sll_const_bvprop (3);
+}
+
+void
+test_srl_const_bvprop ()
+{
+  srl_const_bvprop (3);
+}
+
+void
+test_and_bvprop ()
+{
+  and_bvprop (3);
+}
+
+void
+test_or_bvprop ()
+{
+  or_bvprop (3);
+}
+
+void
+test_xor_bvprop ()
+{
+  xor_bvprop (3);
+}
+
+void
+test_slice_bvprop ()
+{
+  slice_bvprop (3);
+}
+
+void
+test_concat_bvprop ()
+{
+  concat_bvprop (3);
+}
+
+void
+test_sext_bvprop ()
+{
+  sext_bvprop (3);
+}
+
+void
+test_ite_bvprop ()
+{
+  ite_bvprop (3);
+}
+
+void
+test_add_bvprop ()
+{
+  add_bvprop (3);
+}
+
+void
+test_mul_bvprop ()
+{
+  mul_bvprop (3);
+}
+
 /*------------------------------------------------------------------------*/
 
 void
