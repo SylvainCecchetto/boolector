@@ -1281,7 +1281,7 @@ btor_bvprop_ite (BtorMemMgr *mm,
       goto DONE;
     }
 
-    if (!progress)
+    if (bw > 1 && !progress)
     {
       progress = made_progress (tmp_x,
                                 tmp_y,
@@ -1292,6 +1292,7 @@ btor_bvprop_ite (BtorMemMgr *mm,
                                 *res_d_z,
                                 res_tmp_bvc);
     }
+
     btor_bvprop_free (mm, tmp_x);
     btor_bvprop_free (mm, tmp_y);
     btor_bvprop_free (mm, tmp_z);
@@ -1301,7 +1302,7 @@ btor_bvprop_ite (BtorMemMgr *mm,
     tmp_z   = *res_d_z;
     tmp_bvc = res_tmp_bvc;
 
-    if (!c_is_fixed && progress)
+    if (bw > 1 && !c_is_fixed && progress)
     {
       if (!btor_bvprop_sext (mm, tmp_c, tmp_bvc, res_d_c, &res_tmp_bvc))
       {
@@ -1651,6 +1652,10 @@ btor_bvprop_mul (BtorMemMgr *mm,
   tmp_zero = btor_bvprop_new (mm, bv, bv);
   btor_bv_free (mm, bv);
 
+  tmp_x = btor_bvprop_new (mm, d_x->lo, d_x->hi);
+  tmp_y = btor_bvprop_new (mm, d_y->lo, d_y->hi);
+  tmp_z = btor_bvprop_new (mm, d_z->lo, d_z->hi);
+
   if (bw == 1)
   {
     /* For bit-width 1, multiplication simplifies to d_z = ite (d_y, x, 0) */
@@ -1658,14 +1663,19 @@ btor_bvprop_mul (BtorMemMgr *mm,
             mm, d_y, d_x, tmp_zero, d_z, &tmp_res_c, res_d_x, res_d_y, res_d_z))
     {
       res = false;
+      btor_bvprop_free (mm, tmp_res_c);
       btor_bvprop_free (mm, *res_d_x);
       btor_bvprop_free (mm, *res_d_y);
       btor_bvprop_free (mm, *res_d_z);
       goto DONE;
     }
+    btor_bvprop_free (mm, tmp_x);
+    btor_bvprop_free (mm, tmp_y);
+    btor_bvprop_free (mm, tmp_z);
     tmp_x = *res_d_x;
     tmp_y = tmp_res_c;
     tmp_z = *res_d_z;
+    btor_bvprop_free (mm, *res_d_y);
   }
   else
   {
@@ -1747,10 +1757,6 @@ btor_bvprop_mul (BtorMemMgr *mm,
     assert (BTOR_COUNT_STACK (d_c_stack) == BTOR_COUNT_STACK (d_ite_stack));
     assert (BTOR_COUNT_STACK (d_c_stack) == BTOR_COUNT_STACK (d_add_stack) + 1);
     assert (BTOR_COUNT_STACK (d_c_stack) == BTOR_COUNT_STACK (shift_stack));
-
-    tmp_x = btor_bvprop_new (mm, d_x->lo, d_x->hi);
-    tmp_y = btor_bvprop_new (mm, d_y->lo, d_y->hi);
-    tmp_z = btor_bvprop_new (mm, d_z->lo, d_z->hi);
 
     do
     {
@@ -1935,6 +1941,5 @@ DONE:
   BTOR_RELEASE_STACK (d_ite_stack);
   BTOR_RELEASE_STACK (d_add_stack);
   BTOR_RELEASE_STACK (shift_stack);
-
   return res;
 }

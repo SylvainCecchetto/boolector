@@ -1667,6 +1667,8 @@ test_add_bvprop ()
 void
 test_mul_bvprop ()
 {
+  mul_bvprop (1);
+  mul_bvprop (2);
   mul_bvprop (3);
 }
 
