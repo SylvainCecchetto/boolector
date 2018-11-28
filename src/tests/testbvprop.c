@@ -1637,6 +1637,8 @@ test_xor_bvprop ()
 void
 test_slice_bvprop ()
 {
+  slice_bvprop (1);
+  slice_bvprop (2);
   slice_bvprop (3);
 }
 
