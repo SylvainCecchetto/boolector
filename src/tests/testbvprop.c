@@ -1661,6 +1661,8 @@ test_ite_bvprop ()
 void
 test_add_bvprop ()
 {
+  add_bvprop (1);
+  add_bvprop (2);
   add_bvprop (3);
 }
 
