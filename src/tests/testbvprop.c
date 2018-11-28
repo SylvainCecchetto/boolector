@@ -1643,7 +1643,9 @@ test_slice_bvprop ()
 void
 test_concat_bvprop ()
 {
+  concat_bvprop (2);
   concat_bvprop (3);
+  concat_bvprop (4);
 }
 
 void
