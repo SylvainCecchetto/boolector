@@ -1649,7 +1649,9 @@ test_concat_bvprop ()
 void
 test_sext_bvprop ()
 {
+  sext_bvprop (2);
   sext_bvprop (3);
+  sext_bvprop (4);
 }
 
 void
