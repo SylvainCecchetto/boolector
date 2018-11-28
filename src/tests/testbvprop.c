@@ -1613,6 +1613,8 @@ test_sll_const_bvprop ()
 void
 test_srl_const_bvprop ()
 {
+  srl_const_bvprop (1);
+  srl_const_bvprop (2);
   srl_const_bvprop (3);
 }
 
