@@ -1601,6 +1601,8 @@ test_eq_bvprop ()
 void
 test_not_bvprop ()
 {
+  not_bvprop (1);
+  not_bvprop (2);
   not_bvprop (3);
 }
 
