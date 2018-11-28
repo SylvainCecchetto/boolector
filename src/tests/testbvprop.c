@@ -1619,6 +1619,8 @@ test_srl_const_bvprop ()
 void
 test_and_bvprop ()
 {
+  and_bvprop (1);
+  and_bvprop (2);
   and_bvprop (3);
 }
 
