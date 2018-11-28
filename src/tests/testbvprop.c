@@ -1607,6 +1607,8 @@ test_not_bvprop ()
 void
 test_sll_const_bvprop ()
 {
+  sll_const_bvprop (1);
+  sll_const_bvprop (2);
   sll_const_bvprop (3);
 }
 
