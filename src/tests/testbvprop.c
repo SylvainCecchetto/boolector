@@ -1625,6 +1625,8 @@ test_and_bvprop ()
 void
 test_or_bvprop ()
 {
+  or_bvprop (1);
+  or_bvprop (2);
   or_bvprop (3);
 }
 
