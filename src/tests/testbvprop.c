@@ -1631,6 +1631,8 @@ test_or_bvprop ()
 void
 test_xor_bvprop ()
 {
+  xor_bvprop (1);
+  xor_bvprop (2);
   xor_bvprop (3);
 }
 
