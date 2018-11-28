@@ -1655,6 +1655,8 @@ test_sext_bvprop ()
 void
 test_ite_bvprop ()
 {
+  ite_bvprop (1);
+  ite_bvprop (2);
   ite_bvprop (3);
 }
 
