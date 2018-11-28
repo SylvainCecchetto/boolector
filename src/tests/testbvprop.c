@@ -1595,6 +1595,8 @@ mul_bvprop (uint32_t bw)
 void
 test_eq_bvprop ()
 {
+  eq_bvprop (1);
+  eq_bvprop (2);
   eq_bvprop (3);
 }
 
