@@ -14,6 +14,7 @@
 #include "btorbvprop.h"
 #include "testrunner.h"
 #include "utils/btormem.h"
+#include "utils/btorutil.h"
 
 #ifdef NDEBUG
 #undef NDEBUG
@@ -143,14 +144,17 @@ print_domain (BtorBvDomain *d, bool print_short)
         }
       }
     }
+    printf ("%s\n", lo);
     btor_mem_freestr (g_mm, hi);
     btor_mem_freestr (g_mm, lo);
   }
   else
   {
     char *s = btor_bv_to_char (g_mm, d->lo);
+    printf ("lo: %s, ", s);
     btor_mem_freestr (g_mm, s);
     s = btor_bv_to_char (g_mm, d->hi);
+    printf ("hi: %s\n", s);
     btor_mem_freestr (g_mm, s);
   }
 }
@@ -925,6 +929,103 @@ srl_const_bvprop (uint32_t bw)
   shift_const_bvprop_aux (bw, true);
 }
 
+static void
+shift_bvprop_aux (uint32_t bw, bool is_srl)
+{
+  assert (btor_util_is_power_of_2 (bw));
+
+  bool res;
+  uint32_t i, j, k, num_consts, num_consts_shift, bw_shift;
+  char **consts, **consts_shift;
+  BtorBvDomain *d_x, *d_y, *d_z, *res_x, *res_y, *res_z;
+
+  bw_shift         = btor_util_log_2 (bw);
+  num_consts       = generate_consts (bw, &consts);
+  num_consts_shift = generate_consts (bw_shift, &consts_shift);
+
+  for (i = 0; i < num_consts; i++)
+  {
+    d_z = create_domain (consts[i]);
+    for (j = 0; j < num_consts; j++)
+    {
+      d_x = create_domain (consts[j]);
+
+      for (k = 0; k < num_consts_shift; k++)
+      {
+        d_y = create_domain (consts_shift[k]);
+        if (is_srl)
+        {
+#if 0
+          res = btor_bvprop_srl (g_mm, d_x, d_y, d_z, &res_x, &res_y, &res_z);
+          check_sat (d_x,
+                     d_y,
+                     d_z,
+                     0,
+                     res_x,
+                     res_y,
+                     res_z,
+                     0,
+                     0,
+                     boolector_srl,
+                     0,
+                     0,
+                     0,
+                     true,
+                     res);
+#endif
+        }
+        else
+        {
+          res = btor_bvprop_sll (g_mm, d_x, d_y, d_z, &res_x, &res_y, &res_z);
+          check_sat (d_x,
+                     d_y,
+                     d_z,
+                     0,
+                     res_x,
+                     res_y,
+                     res_z,
+                     0,
+                     0,
+                     boolector_sll,
+                     0,
+                     0,
+                     0,
+                     true,
+                     res);
+        }
+
+        assert (!btor_bvprop_is_fixed (g_mm, d_x)
+                || !btor_bvprop_is_valid (g_mm, res_x)
+                || !btor_bv_compare (d_x->lo, res_x->lo));
+        assert (!btor_bvprop_is_fixed (g_mm, d_y)
+                || !btor_bvprop_is_valid (g_mm, res_y)
+                || !btor_bv_compare (d_y->lo, res_y->lo));
+        assert (!res || !btor_bvprop_is_fixed (g_mm, d_z)
+                || !btor_bvprop_is_valid (g_mm, res_z)
+                || !btor_bv_compare (d_z->lo, res_z->lo));
+        TEST_BVPROP_RELEASE_RES_XYZ;
+        btor_bvprop_free (g_mm, d_y);
+      }
+      btor_bvprop_free (g_mm, d_x);
+    }
+    btor_bvprop_free (g_mm, d_z);
+  }
+  free_consts (bw, num_consts, consts);
+  free_consts (bw_shift, num_consts_shift, consts_shift);
+}
+
+void
+sll_bvprop (uint32_t bw)
+{
+  shift_bvprop_aux (bw, false);
+}
+
+void
+srl_bvprop (uint32_t bw)
+{
+  shift_bvprop_aux (bw, true);
+}
+
 #define TEST_BVPROP_AND 0
 #define TEST_BVPROP_OR 1
 #define TEST_BVPROP_XOR 2
@@ -1626,6 +1727,13 @@ test_srl_const_bvprop ()
 }
 
 void
+test_sll_bvprop ()
+{
+  sll_bvprop (2);
+  sll_bvprop (4);
+}
+
+void
 test_and_bvprop ()
 {
   and_bvprop (1);
@@ -1709,6 +1817,7 @@ run_bvprop_tests (int32_t argc, char **argv)
   BTOR_RUN_TEST (not_bvprop);
   BTOR_RUN_TEST (sll_const_bvprop);
   BTOR_RUN_TEST (srl_const_bvprop);
+  BTOR_RUN_TEST (sll_bvprop);
   BTOR_RUN_TEST (and_bvprop);
   BTOR_RUN_TEST (or_bvprop);
   BTOR_RUN_TEST (xor_bvprop);

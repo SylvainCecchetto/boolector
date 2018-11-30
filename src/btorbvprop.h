@@ -64,6 +64,16 @@ bool btor_bvprop_sll_const (BtorMemMgr *mm,
                             BtorBvDomain **res_d_x,
                             BtorBvDomain **res_d_z);
 
+/* Propagate domains 'd_x' and 'd_z' of z = x << y where y is not const.
+ * Note: bw(y) = log_2 bw(y). */
+bool btor_bvprop_sll (BtorMemMgr *mm,
+                      BtorBvDomain *d_x,
+                      BtorBvDomain *d_y,
+                      BtorBvDomain *d_z,
+                      BtorBvDomain **res_d_x,
+                      BtorBvDomain **res_d_y,
+                      BtorBvDomain **res_d_z);
+
 /* Propagate domains 'd_x' and 'd_z' of z = x >> n where n is const. */
 bool btor_bvprop_srl_const (BtorMemMgr *mm,
                             BtorBvDomain *d_x,
