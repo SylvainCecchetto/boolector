@@ -955,7 +955,6 @@ shift_bvprop_aux (uint32_t bw, bool is_srl)
         d_y = create_domain (consts_shift[k]);
         if (is_srl)
         {
-#if 0
           res = btor_bvprop_srl (g_mm, d_x, d_y, d_z, &res_x, &res_y, &res_z);
           check_sat (d_x,
                      d_y,
@@ -972,7 +971,6 @@ shift_bvprop_aux (uint32_t bw, bool is_srl)
                      0,
                      true,
                      res);
-#endif
         }
         else
         {
@@ -1734,6 +1732,13 @@ test_sll_bvprop ()
 }
 
 void
+test_srl_bvprop ()
+{
+  srl_bvprop (2);
+  srl_bvprop (4);
+}
+
+void
 test_and_bvprop ()
 {
   and_bvprop (1);
@@ -1818,6 +1823,7 @@ run_bvprop_tests (int32_t argc, char **argv)
   BTOR_RUN_TEST (sll_const_bvprop);
   BTOR_RUN_TEST (srl_const_bvprop);
   BTOR_RUN_TEST (sll_bvprop);
+  BTOR_RUN_TEST (srl_bvprop);
   BTOR_RUN_TEST (and_bvprop);
   BTOR_RUN_TEST (or_bvprop);
   BTOR_RUN_TEST (xor_bvprop);
