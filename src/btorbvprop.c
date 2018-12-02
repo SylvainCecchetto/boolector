@@ -1619,13 +1619,14 @@ DONE:
 }
 
 bool
-btor_bvprop_add (BtorMemMgr *mm,
-                 BtorBvDomain *d_x,
-                 BtorBvDomain *d_y,
-                 BtorBvDomain *d_z,
-                 BtorBvDomain **res_d_x,
-                 BtorBvDomain **res_d_y,
-                 BtorBvDomain **res_d_z)
+bvprop_add_aux (BtorMemMgr *mm,
+                BtorBvDomain *d_x,
+                BtorBvDomain *d_y,
+                BtorBvDomain *d_z,
+                BtorBvDomain **res_d_x,
+                BtorBvDomain **res_d_y,
+                BtorBvDomain **res_d_z,
+                bool no_overflows)
 {
   assert (mm);
   assert (d_x);
@@ -1645,6 +1646,7 @@ btor_bvprop_add (BtorMemMgr *mm,
   BtorBvDomain *tmp_cin, *tmp_cout;
   BtorBvDomain *tmp_x_xor_y, *tmp_x_and_y;
   BtorBvDomain *tmp_cin_and_x_xor_y;
+  BtorBvDomain *tmp_cin_msb, *tmp_cout_msb, *d_one;
 
   res = true;
 
@@ -1676,6 +1678,16 @@ btor_bvprop_add (BtorMemMgr *mm,
   tmp_x_xor_y         = btor_bvprop_new_init (mm, bw);
   tmp_x_and_y         = btor_bvprop_new_init (mm, bw);
   tmp_cin_and_x_xor_y = btor_bvprop_new_init (mm, bw);
+
+  tmp_cin_msb  = 0;
+  tmp_cout_msb = 0;
+  d_one        = 0;
+  if (no_overflows)
+  {
+    tmp_cin  = btor_bvprop_new_init (mm, 1);
+    tmp_cout = btor_bvprop_new_init (mm, 1);
+    d_one    = btor_bvprop_new (mm, one, one);
+  }
 
   do
   {
@@ -1847,6 +1859,84 @@ btor_bvprop_add (BtorMemMgr *mm,
     btor_bvprop_free (mm, tmp_cin);
     tmp_cout = *res_d_x;
     tmp_cin  = *res_d_z;
+
+    if (no_overflows)
+    {
+      assert (tmp_cin_msb);
+      assert (tmp_cout_msb);
+      assert (d_one);
+
+      /* cin[MSB:MSB] != 1  || cout[MSB:MSB] != 0 */
+      if (!btor_bvprop_slice (
+              mm, tmp_cin, tmp_cin_msb, bw - 1, bw - 1, res_d_x, res_d_z))
+      {
+        res = false;
+        btor_bvprop_free (mm, *res_d_x);
+        btor_bvprop_free (mm, *res_d_z);
+        goto DONE;
+      }
+      assert (btor_bvprop_is_valid (mm, *res_d_x));
+      assert (btor_bvprop_is_valid (mm, *res_d_z));
+      if (!progress)
+      {
+        progress = made_progress (
+            tmp_cin, 0, tmp_cin_msb, 0, *res_d_x, 0, *res_d_z, 0);
+      }
+      btor_bvprop_free (mm, tmp_cin);
+      btor_bvprop_free (mm, tmp_cin_msb);
+      tmp_cin     = *res_d_x;
+      tmp_cin_msb = *res_d_z;
+
+      if (!btor_bvprop_slice (
+              mm, tmp_cout, tmp_cout_msb, bw - 1, bw - 1, res_d_x, res_d_z))
+      {
+        res = false;
+        btor_bvprop_free (mm, *res_d_x);
+        btor_bvprop_free (mm, *res_d_z);
+        goto DONE;
+      }
+      assert (btor_bvprop_is_valid (mm, *res_d_x));
+      assert (btor_bvprop_is_valid (mm, *res_d_z));
+      if (!progress)
+      {
+        progress = made_progress (
+            tmp_cout, 0, tmp_cout_msb, 0, *res_d_x, 0, *res_d_z, 0);
+      }
+      btor_bvprop_free (mm, tmp_cout);
+      btor_bvprop_free (mm, tmp_cout_msb);
+      tmp_cout     = *res_d_x;
+      tmp_cout_msb = *res_d_z;
+
+      if (!btor_bvprop_or (
+              mm, tmp_cin_msb, tmp_cout_msb, d_one, res_d_x, res_d_y, res_d_z))
+      {
+        res = false;
+        btor_bvprop_free (mm, *res_d_x);
+        btor_bvprop_free (mm, *res_d_y);
+        btor_bvprop_free (mm, *res_d_z);
+      }
+      assert (btor_bvprop_is_valid (mm, *res_d_x));
+      assert (btor_bvprop_is_valid (mm, *res_d_y));
+      assert (btor_bvprop_is_valid (mm, *res_d_z));
+      if (!progress)
+      {
+        progress = made_progress (tmp_cin_msb,
+                                  tmp_cout_msb,
+                                  d_one,
+                                  0,
+                                  *res_d_x,
+                                  *res_d_y,
+                                  *res_d_z,
+                                  0);
+      }
+      btor_bvprop_free (mm, tmp_cin_msb);
+      btor_bvprop_free (mm, tmp_cout_msb);
+      tmp_cin_msb  = *res_d_x;
+      tmp_cout_msb = *res_d_y;
+      assert (!btor_bv_compare ((*res_d_z)->lo, d_one->lo));
+      assert (!btor_bv_compare ((*res_d_z)->hi, d_one->hi));
+      btor_bvprop_free (mm, *res_d_z);
+    }
   } while (progress);
 
   assert (btor_bvprop_is_valid (mm, tmp_x));
@@ -1863,10 +1953,25 @@ DONE:
   btor_bvprop_free (mm, tmp_x_xor_y);
   btor_bvprop_free (mm, tmp_x_and_y);
   btor_bvprop_free (mm, tmp_cin_and_x_xor_y);
+  if (tmp_cin_msb) btor_bvprop_free (mm, tmp_cin_msb);
+  if (tmp_cout_msb) btor_bvprop_free (mm, tmp_cout_msb);
+  if (d_one) btor_bvprop_free (mm, d_one);
 
   btor_bv_free (mm, one);
 
   return res;
+}
+
+bool
+btor_bvprop_add (BtorMemMgr *mm,
+                 BtorBvDomain *d_x,
+                 BtorBvDomain *d_y,
+                 BtorBvDomain *d_z,
+                 BtorBvDomain **res_d_x,
+                 BtorBvDomain **res_d_y,
+                 BtorBvDomain **res_d_z)
+{
+  return bvprop_add_aux (mm, d_x, d_y, d_z, res_d_x, res_d_y, res_d_z, false);
 }
 
 bool
