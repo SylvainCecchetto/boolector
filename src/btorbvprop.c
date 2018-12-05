@@ -1618,15 +1618,16 @@ DONE:
   return res;
 }
 
-bool
-btor_bvprop_add_aux (BtorMemMgr *mm,
-                     BtorBvDomain *d_x,
-                     BtorBvDomain *d_y,
-                     BtorBvDomain *d_z,
-                     BtorBvDomain **res_d_x,
-                     BtorBvDomain **res_d_y,
-                     BtorBvDomain **res_d_z,
-                     bool no_overflows)
+static bool
+bvprop_add_aux (BtorMemMgr *mm,
+                BtorBvDomain *d_x,
+                BtorBvDomain *d_y,
+                BtorBvDomain *d_z,
+                BtorBvDomain **res_d_x,
+                BtorBvDomain **res_d_y,
+                BtorBvDomain **res_d_z,
+                BtorBvDomain **res_d_cout_msb,
+                bool no_overflows)
 {
   assert (mm);
   assert (d_x);
@@ -1638,6 +1639,7 @@ btor_bvprop_add_aux (BtorMemMgr *mm,
   assert (res_d_x);
   assert (res_d_y);
   assert (res_d_z);
+  assert (res_d_cout_msb);
 
   bool progress, res;
   uint32_t bw;
@@ -1933,17 +1935,46 @@ DONE:
   *res_d_x = tmp_x;
   *res_d_y = tmp_y;
   *res_d_z = tmp_z;
+  if (tmp_cout_msb)
+  {
+    *res_d_cout_msb = tmp_cout_msb;
+  }
+  else
+  {
+    BtorBitVector *lo = btor_bv_slice (mm, tmp_cout->lo, bw - 1, bw - 1);
+    BtorBitVector *hi = btor_bv_slice (mm, tmp_cout->hi, bw - 1, bw - 1);
+    *res_d_cout_msb   = btor_bvprop_new (mm, lo, hi);
+    btor_bv_free (mm, lo);
+    btor_bv_free (mm, hi);
+  }
 
   btor_bvprop_free (mm, tmp_cin);
   btor_bvprop_free (mm, tmp_cout);
   btor_bvprop_free (mm, tmp_x_xor_y);
   btor_bvprop_free (mm, tmp_x_and_y);
   btor_bvprop_free (mm, tmp_cin_and_x_xor_y);
-  if (tmp_cout_msb) btor_bvprop_free (mm, tmp_cout_msb);
   if (d_one) btor_bvprop_free (mm, d_one);
 
   btor_bv_free (mm, one);
 
+  return res;
+}
+
+bool
+btor_bvprop_add_aux (BtorMemMgr *mm,
+                     BtorBvDomain *d_x,
+                     BtorBvDomain *d_y,
+                     BtorBvDomain *d_z,
+                     BtorBvDomain **res_d_x,
+                     BtorBvDomain **res_d_y,
+                     BtorBvDomain **res_d_z,
+                     bool no_overflows)
+{
+  bool res;
+  BtorBvDomain *res_d_carry;
+  res = bvprop_add_aux (
+      mm, d_x, d_y, d_z, res_d_x, res_d_y, res_d_z, &res_d_carry, no_overflows);
+  btor_bvprop_free (mm, res_d_carry);
   return res;
 }
 
