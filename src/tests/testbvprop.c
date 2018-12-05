@@ -1598,7 +1598,7 @@ add_bvprop (uint32_t bw, bool no_overflows)
                    true,
                    res);
 
-        if (res && btor_bvprop_is_fixed (g_mm, d_x)
+        if (btor_bvprop_is_fixed (g_mm, d_x)
             && btor_bvprop_is_fixed (g_mm, d_y))
         {
           assert (btor_bvprop_is_fixed (g_mm, res_x));
@@ -1608,8 +1608,9 @@ add_bvprop (uint32_t bw, bool no_overflows)
             tmp = btor_bv_add (g_mm, res_x->lo, res_y->lo);
             assert (!btor_bv_compare (d_x->lo, res_x->lo));
             assert (!btor_bv_compare (d_y->lo, res_y->lo));
-            assert (btor_bvprop_is_fixed (g_mm, res_z));
-            assert (!btor_bv_compare (tmp, res_z->lo));
+            assert (no_overflows || btor_bvprop_is_fixed (g_mm, res_z));
+            assert (!btor_bvprop_is_fixed (g_mm, res_z)
+                    || !btor_bv_compare (tmp, res_z->lo));
             btor_bv_free (g_mm, tmp);
           }
           else if (btor_bvprop_is_fixed (g_mm, d_z))
