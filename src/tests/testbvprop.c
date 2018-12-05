@@ -488,6 +488,7 @@ check_sat (BtorBvDomain *d_x,
            BtorBvDomain *res_c,
            BoolectorNode *(*unfun) (Btor *, BoolectorNode *),
            BoolectorNode *(*binfun) (Btor *, BoolectorNode *, BoolectorNode *),
+           BoolectorNode *(*binofun) (Btor *, BoolectorNode *, BoolectorNode *),
            BoolectorNode *(*extfun) (Btor *, BoolectorNode *, uint32_t),
            uint32_t hi,
            uint32_t lo,
@@ -501,12 +502,13 @@ check_sat (BtorBvDomain *d_x,
   assert (!d_c || (!unfun && !binfun && !extfun));
   assert (!d_y || d_c || binfun || extfun);
   assert (!extfun || hi);
+  assert (!binofun || binfun);
 
   int32_t sat_res;
   uint32_t i, bwx, bwy, bwz, idx;
   char *str_x, *str_y, *str_z, *str_c;
   Btor *btor;
-  BoolectorNode *x, *y, *z, *c, *fun, *eq, *slice, *one, *zero;
+  BoolectorNode *x, *y, *z, *c, *fun, *ofun, *not, *eq, *slice, *one, *zero;
   BoolectorSort swx, swy, swz, s1;
 
   str_x = from_domain (g_mm, d_x);
@@ -553,6 +555,14 @@ check_sat (BtorBvDomain *d_x,
     assert (y);
     assert (!unfun && !extfun);
     fun = binfun (btor, x, y);
+    if (binofun)
+    {
+      ofun = binofun (btor, x, y);
+      not  = boolector_not (btor, ofun);
+      boolector_assert (btor, not);
+      boolector_release (btor, not);
+      boolector_release (btor, ofun);
+    }
   }
   else if (extfun)
   {
@@ -796,6 +806,7 @@ not_bvprop (uint32_t bw)
                  0,
                  0,
                  0,
+                 0,
                  false,
                  res);
 
@@ -871,6 +882,7 @@ shift_const_bvprop_aux (uint32_t bw, bool is_srl)
                      0,
                      0,
                      0,
+                     0,
                      false,
                      res);
         }
@@ -887,6 +899,7 @@ shift_const_bvprop_aux (uint32_t bw, bool is_srl)
                      0,
                      0,
                      boolector_sll,
+                     0,
                      0,
                      0,
                      0,
@@ -969,6 +982,7 @@ shift_bvprop_aux (uint32_t bw, bool is_srl)
                      0,
                      0,
                      0,
+                     0,
                      true,
                      res);
         }
@@ -985,6 +999,7 @@ shift_bvprop_aux (uint32_t bw, bool is_srl)
                      0,
                      0,
                      boolector_sll,
+                     0,
                      0,
                      0,
                      0,
@@ -1065,6 +1080,7 @@ and_or_xor_bvprop_aux (int32_t op, uint32_t bw)
                      0,
                      0,
                      0,
+                     0,
                      false,
                      res);
         }
@@ -1081,6 +1097,7 @@ and_or_xor_bvprop_aux (int32_t op, uint32_t bw)
                      0,
                      0,
                      boolector_or,
+                     0,
                      0,
                      0,
                      0,
@@ -1101,6 +1118,7 @@ and_or_xor_bvprop_aux (int32_t op, uint32_t bw)
                      0,
                      0,
                      boolector_xor,
+                     0,
                      0,
                      0,
                      0,
@@ -1250,6 +1268,7 @@ slice_bvprop (uint32_t bw)
                      0,
                      0,
                      0,
+                     0,
                      upper,
                      lower,
                      false,
@@ -1314,6 +1333,7 @@ slice_bvprop (uint32_t bw)
                0,                                                           \
                0,                                                           \
                boolector_concat,                                            \
+               0,                                                           \
                0,                                                           \
                0,                                                           \
                0,                                                           \
@@ -1446,6 +1466,7 @@ sext_bvprop (uint32_t bw)
                    0,
                    0,
                    0,
+                   0,
                    boolector_sext,
                    n,
                    0,
@@ -1518,6 +1539,7 @@ ite_bvprop (uint32_t bw)
                      0,
                      0,
                      0,
+                     0,
                      false, /* we always get an invalid result if invalid */
                      res);
           if (res) check_ite (res_x, res_y, res_z, res_c);
@@ -1536,7 +1558,7 @@ ite_bvprop (uint32_t bw)
 }
 
 void
-add_bvprop (uint32_t bw)
+add_bvprop (uint32_t bw, bool no_overflows)
 {
   bool res;
   uint32_t num_consts;
@@ -1557,7 +1579,8 @@ add_bvprop (uint32_t bw)
       {
         d_y = create_domain (consts[k]);
 
-        res = btor_bvprop_add (g_mm, d_x, d_y, d_z, &res_x, &res_y, &res_z);
+        res = btor_bvprop_add_aux (
+            g_mm, d_x, d_y, d_z, &res_x, &res_y, &res_z, no_overflows);
         check_sat (d_x,
                    d_y,
                    d_z,
@@ -1568,13 +1591,14 @@ add_bvprop (uint32_t bw)
                    0,
                    0,
                    boolector_add,
+                   no_overflows ? boolector_uaddo : 0,
                    0,
                    0,
                    0,
                    true,
                    res);
 
-        if (btor_bvprop_is_fixed (g_mm, d_x)
+        if (res && btor_bvprop_is_fixed (g_mm, d_x)
             && btor_bvprop_is_fixed (g_mm, d_y))
         {
           assert (btor_bvprop_is_fixed (g_mm, res_x));
@@ -1646,6 +1670,7 @@ mul_bvprop (uint32_t bw)
                    0,
                    0,
                    boolector_mul,
+                   0,
                    0,
                    0,
                    0,
@@ -1797,9 +1822,12 @@ test_ite_bvprop ()
 void
 test_add_bvprop ()
 {
-  add_bvprop (1);
-  add_bvprop (2);
-  add_bvprop (3);
+  add_bvprop (1, false);
+  add_bvprop (2, false);
+  add_bvprop (3, false);
+  add_bvprop (1, true);
+  add_bvprop (2, true);
+  add_bvprop (3, true);
 }
 
 void

@@ -164,6 +164,19 @@ bool btor_bvprop_add (BtorMemMgr *mm,
                       BtorBvDomain **res_d_x,
                       BtorBvDomain **res_d_z);
 
+/**
+ * Propagate domains 'd_x', 'd_y' and 'd_z' of z = x + y where + does not
+ * overflow.
+ */
+bool btor_bvprop_add_aux (BtorMemMgr *mm,
+                          BtorBvDomain *d_x,
+                          BtorBvDomain *d_y,
+                          BtorBvDomain *d_z,
+                          BtorBvDomain **res_d_x,
+                          BtorBvDomain **res_d_y,
+                          BtorBvDomain **res_d_z,
+                          bool no_overflows);
+
 /* Propagate domains 'd_x', 'd_y' and 'd_z' of z = x * y. */
 bool btor_bvprop_mul (BtorMemMgr *mm,
                       BtorBvDomain *d_x,
