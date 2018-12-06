@@ -1621,14 +1621,20 @@ btor_bv_sext (BtorMemMgr *mm, const BtorBitVector *bv, uint32_t len)
 {
   assert (mm);
   assert (bv);
-  assert (len > 0);
 
   BtorBitVector *tmp, *res;
 
-  tmp = btor_bv_get_bit (bv, bv->width - 1) ? btor_bv_ones (mm, len)
-                                            : btor_bv_zero (mm, len);
-  res = btor_bv_concat (mm, tmp, bv);
-  btor_bv_free (mm, tmp);
+  if (len == 0)
+  {
+    res = btor_bv_copy (mm, bv);
+  }
+  else
+  {
+    tmp = btor_bv_get_bit (bv, bv->width - 1) ? btor_bv_ones (mm, len)
+                                              : btor_bv_zero (mm, len);
+    res = btor_bv_concat (mm, tmp, bv);
+    btor_bv_free (mm, tmp);
+  }
   assert (rem_bits_zero_dbg (res));
   return res;
 }

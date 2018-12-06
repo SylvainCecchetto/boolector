@@ -69,6 +69,15 @@ new_domain (BtorMemMgr *mm)
   return res;
 }
 
+static BtorBvDomain *
+new_invalid_domain (BtorMemMgr *mm, uint32_t width)
+{
+  BtorBvDomain *res = new_domain (mm);
+  res->lo           = btor_bv_ones (mm, width);
+  res->hi           = btor_bv_zero (mm, width);
+  return res;
+}
+
 BtorBvDomain *
 btor_bvprop_new_init (BtorMemMgr *mm, uint32_t width)
 {
@@ -101,8 +110,8 @@ btor_bvprop_free (BtorMemMgr *mm, BtorBvDomain *d)
   assert (mm);
   assert (d);
 
-  btor_bv_free (mm, d->lo);
-  btor_bv_free (mm, d->hi);
+  if (d->lo) { btor_bv_free (mm, d->lo); }
+  if (d->hi) { btor_bv_free (mm, d->hi); }
   BTOR_DELETE (mm, d);
 }
 
@@ -157,7 +166,9 @@ bool
 btor_bvprop_eq (BtorMemMgr *mm,
                 BtorBvDomain *d_x,
                 BtorBvDomain *d_y,
-                BtorBvDomain **res_d_xy,
+                BtorBvDomain *d_z,
+                BtorBvDomain **res_d_x,
+                BtorBvDomain **res_d_y,
                 BtorBvDomain **res_d_z)
 {
   assert (mm);
@@ -165,42 +176,118 @@ btor_bvprop_eq (BtorMemMgr *mm,
   assert (btor_bvprop_is_valid (mm, d_x));
   assert (d_y);
   assert (btor_bvprop_is_valid (mm, d_y));
+  assert (d_z);
+  assert (btor_bvprop_is_valid (mm, d_z));
+  assert (d_x->lo->width == d_y->lo->width);
+  assert (d_x->hi->width == d_y->hi->width);
+  assert (d_z->lo->width == 1);
+  assert (d_z->hi->width == 1);
 
-  /**
-   * lo_xy = lo_x | lo_y
-   * hi_xy = hi_x & hi_y
-   */
-  *res_d_xy       = new_domain (mm);
-  (*res_d_xy)->lo = btor_bv_or (mm, d_x->lo, d_y->lo);
-  (*res_d_xy)->hi = btor_bv_and (mm, d_x->hi, d_y->hi);
+  bool valid = true;
+  BtorBvDomain *tmp;
+  BtorBitVector *sext_lo_z = btor_bv_sext (mm, d_z->lo, d_x->lo->width - 1);
+  BtorBitVector *not_hi_y  = btor_bv_not (mm, d_y->hi);
+  BtorBitVector *not_hi_x  = btor_bv_not (mm, d_x->hi);
 
+  // lo_x = lo_x | (sext(lo_z,n) & lo_y)
+  // hi_x = hi_x & ~(sext(hi_z,n) & ~hi_y)
+
+  tmp                          = new_domain (mm);
+  BtorBitVector *lo_z_and_lo_y = btor_bv_and (mm, sext_lo_z, d_y->lo);
+  tmp->lo                      = btor_bv_or (mm, d_x->lo, lo_z_and_lo_y);
+
+  BtorBitVector *lo_z_and_hi_y = btor_bv_and (mm, sext_lo_z, not_hi_y);
+  BtorBitVector *not_and       = btor_bv_not (mm, lo_z_and_hi_y);
+  tmp->hi                      = btor_bv_and (mm, d_x->hi, not_and);
+
+  btor_bv_free (mm, lo_z_and_lo_y);
+  btor_bv_free (mm, lo_z_and_hi_y);
+  btor_bv_free (mm, not_and);
+
+  valid = valid & btor_bvprop_is_valid (mm, tmp);
+  if (res_d_x)
+  {
+    *res_d_x = tmp;
+  }
+  else
+  {
+    btor_bvprop_free (mm, tmp);
+  }
+
+  // lo_y = lo_y | (sext(lo_z,n) & lo_x)
+  // hi_y = hi_y & ~(sext(hi_z,n) & ~hi_x)
+
+  tmp = new_domain (mm);
+  if (valid)
+  {
+    BtorBitVector *lo_z_and_lo_x = btor_bv_and (mm, sext_lo_z, d_x->lo);
+    tmp->lo                      = btor_bv_or (mm, d_y->lo, lo_z_and_lo_x);
+
+    BtorBitVector *lo_z_and_hi_x = btor_bv_and (mm, sext_lo_z, not_hi_x);
+    not_and                      = btor_bv_not (mm, lo_z_and_hi_x);
+    tmp->hi                      = btor_bv_and (mm, d_y->hi, not_and);
+
+    btor_bv_free (mm, lo_z_and_lo_x);
+    btor_bv_free (mm, lo_z_and_hi_x);
+    btor_bv_free (mm, not_and);
+
+    valid = valid & btor_bvprop_is_valid (mm, tmp);
+  }
+  if (res_d_y)
+  {
+    *res_d_y = tmp;
+  }
+  else
+  {
+    btor_bvprop_free (mm, tmp);
+  }
+
+  // lo_z = lo_z | redand((lo_x & lo_y) | (~hi_x & ~hi_y))
+  // hi_z = hi_z & ~redand((lo_x & ~hi_y) | (~hi_x & lo_y))
+
+  tmp = new_domain (mm);
+  if (valid)
+  {
+    BtorBitVector *lo_x_and_lo_y = btor_bv_and (mm, d_x->lo, d_y->lo);
+    BtorBitVector *hi_x_and_hi_y = btor_bv_and (mm, not_hi_x, not_hi_y);
+    BtorBitVector * or    = btor_bv_or (mm, lo_x_and_lo_y, hi_x_and_hi_y);
+    BtorBitVector *redand = btor_bv_redand (mm, or);
+    tmp->lo               = btor_bv_or (mm, d_z->lo, redand);
+
+    btor_bv_free (mm, lo_x_and_lo_y);
+    btor_bv_free (mm, hi_x_and_hi_y);
+    btor_bv_free (mm, or);
+    btor_bv_free (mm, redand);
+
+    BtorBitVector *lo_x_and_hi_y = btor_bv_and (mm, d_x->lo, not_hi_y);
+    BtorBitVector *hi_x_and_lo_y = btor_bv_and (mm, not_hi_x, d_y->lo);
+    or                        = btor_bv_or (mm, lo_x_and_hi_y, hi_x_and_lo_y);
+    redand                    = btor_bv_redand (mm, or);
+    BtorBitVector *not_redand = btor_bv_not (mm, redand);
+    tmp->hi                   = btor_bv_and (mm, d_z->hi, not_redand);
+
+    btor_bv_free (mm, lo_x_and_hi_y);
+    btor_bv_free (mm, hi_x_and_lo_y);
+    btor_bv_free (mm, or);
+    btor_bv_free (mm, redand);
+    btor_bv_free (mm, not_redand);
+
+    valid = valid & btor_bvprop_is_valid (mm, tmp);
+  }
   if (res_d_z)
   {
-    if (btor_bvprop_is_valid (mm, *res_d_xy))
-    {
-      /* Domain is valid and fixed: equality is true. */
-      if (btor_bvprop_is_fixed (mm, *res_d_xy))
-      {
-        *res_d_z       = new_domain (mm);
-        (*res_d_z)->lo = btor_bv_one (mm, 1);
-        (*res_d_z)->hi = btor_bv_one (mm, 1);
-      }
-      /* Domain is valid and not fixed: equality can be true/false. */
-      else
-      {
-        *res_d_z = btor_bvprop_new_init (mm, 1);
-      }
-    }
-    /* Domain is invalid: equality is false. */
-    else
-    {
-      *res_d_z       = new_domain (mm);
-      (*res_d_z)->lo = btor_bv_zero (mm, 1);
-      (*res_d_z)->hi = btor_bv_zero (mm, 1);
-    }
-    assert (btor_bvprop_is_valid (mm, *res_d_z));
+    *res_d_z = tmp;
   }
-  return true;
+  else
+  {
+    btor_bvprop_free (mm, tmp);
+  }
+
+  btor_bv_free (mm, sext_lo_z);
+  btor_bv_free (mm, not_hi_x);
+  btor_bv_free (mm, not_hi_y);
+
+  return valid;
 }
 
 bool
@@ -905,12 +992,19 @@ btor_bvprop_slice (BtorMemMgr *mm,
   sliced_x->lo           = btor_bv_slice (mm, d_x->lo, upper, lower);
   sliced_x->hi           = btor_bv_slice (mm, d_x->hi, upper, lower);
 
-  if (!btor_bvprop_eq (mm, sliced_x, d_z, res_d_z, 0))
+  BtorBitVector *one = btor_bv_one (mm, 1);
+  BtorBvDomain *d_eq = btor_bvprop_new (mm, one, one);
+  btor_bv_free (mm, one);
+
+  bool valid =  btor_bvprop_eq (mm, sliced_x, d_z, d_eq, res_d_z, 0, 0);
+  btor_bvprop_free (mm, d_eq);
+  btor_bvprop_free (mm, sliced_x);
+
+  if (!valid)
   {
-    btor_bvprop_free (mm, sliced_x);
+    *res_d_x = new_invalid_domain (mm, d_x->lo->width);
     return false;
   }
-  btor_bvprop_free (mm, sliced_x);
 
   uint32_t wx = d_x->lo->width;
 
@@ -1075,13 +1169,17 @@ btor_bvprop_concat (BtorMemMgr *mm,
 
   *res_d_z = new_domain (mm);
 
+  BtorBitVector *one = btor_bv_one (mm, 1);
+  BtorBvDomain *d_eq = btor_bvprop_new (mm, one, one);
+  btor_bv_free (mm, one);
+
   /* res_z = prop(d_zx = d_x) o prop(d_zy o d_y) */
-  if (!btor_bvprop_eq (mm, d_zx, d_x, res_d_x, 0))
+  if (!btor_bvprop_eq (mm, d_zx, d_x, d_eq, res_d_x, 0, 0))
   {
     res = false;
     goto DONE;
   }
-  if (!btor_bvprop_eq (mm, d_zy, d_y, res_d_y, 0))
+  if (!btor_bvprop_eq (mm, d_zy, d_y, d_eq, res_d_y, 0, 0))
   {
     res = false;
     goto DONE;
@@ -1100,6 +1198,7 @@ DONE:
   btor_bv_free (mm, hi_zy);
   btor_bvprop_free (mm, d_zx);
   btor_bvprop_free (mm, d_zy);
+  btor_bvprop_free (mm, d_eq);
 #endif
   return res;
 }

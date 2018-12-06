@@ -728,49 +728,50 @@ test_new_init_domain_bvprop ()
 void
 eq_bvprop (uint32_t bw)
 {
+  bool res;
+  char **consts;
   uint32_t num_consts;
-  char *str_z, **consts;
-  BtorBvDomain *d_x, *d_y, *res_xy, *res_z;
+  const char *values_z[] = {"x", "0", "1"};
+  BtorBvDomain *d_x, *d_y, *d_z, *res_x, *res_y, *res_z;
 
   num_consts = generate_consts (bw, &consts);
 
-  for (uint32_t i = 0; i < num_consts; i++)
+  for (size_t k = 0; k < 3; k++)
   {
-    d_x = create_domain (consts[i]);
-    for (uint32_t j = 0; j < num_consts; j++)
+    d_z = create_domain (values_z[k]);
+    for (size_t i = 0; i < num_consts; i++)
     {
-      d_y = create_domain (consts[j]);
-      (void) btor_bvprop_eq (g_mm, d_x, d_y, &res_xy, &res_z);
-      if (btor_bvprop_is_fixed (g_mm, res_z))
+      d_x = create_domain (consts[i]);
+      for (size_t j = 0; j < num_consts; j++)
       {
-        str_z = from_domain (g_mm, res_z);
-        assert (strlen (str_z) == 1);
-        assert (str_z[0] == '0' || str_z[0] == '1');
-        if (str_z[0] == '0')
-        {
-          assert (!btor_bvprop_is_valid (g_mm, res_xy));
-          assert (is_false_eq (consts[i], consts[j]));
-        }
-        else
-        {
-          assert (str_z[0] == '1');
-          assert (btor_bvprop_is_valid (g_mm, res_xy));
-          assert (btor_bvprop_is_fixed (g_mm, res_xy));
-          assert (is_true_eq (consts[i], consts[j]));
-        }
-        btor_mem_freestr (g_mm, str_z);
+        d_y = create_domain (consts[j]);
+        res = btor_bvprop_eq (g_mm, d_x, d_y, d_z, &res_x, &res_y, &res_z);
+
+        check_sat (d_x,
+                   d_y,
+                   d_z,
+                   0,
+                   res_x,
+                   res_y,
+                   res_z,
+                   0,
+                   0,
+                   boolector_eq,
+                   0,
+                   0,
+                   0,
+                   0,
+                   true,
+                   res);
+
+        btor_bvprop_free (g_mm, d_y);
+        btor_bvprop_free (g_mm, res_x);
+        btor_bvprop_free (g_mm, res_y);
+        btor_bvprop_free (g_mm, res_z);
       }
-      else
-      {
-        assert (btor_bvprop_is_valid (g_mm, res_xy));
-        assert (!is_false_eq (consts[i], consts[j]));
-        assert (!is_true_eq (consts[i], consts[j]));
-      }
-      btor_bvprop_free (g_mm, d_y);
-      btor_bvprop_free (g_mm, res_xy);
-      btor_bvprop_free (g_mm, res_z);
+      btor_bvprop_free (g_mm, d_x);
     }
-    btor_bvprop_free (g_mm, d_x);
+    btor_bvprop_free (g_mm, d_z);
   }
   free_consts (bw, num_consts, consts);
 }
