@@ -19,7 +19,7 @@
 #include <stdio.h>
 #include "utils/btorutil.h"
 
-#if 0
+#if 1
 static void
 print_domain (BtorMemMgr *g_mm, BtorBvDomain *d, bool print_short)
 {
@@ -1623,10 +1623,11 @@ bvprop_add_aux (BtorMemMgr *mm,
                 BtorBvDomain *d_x,
                 BtorBvDomain *d_y,
                 BtorBvDomain *d_z,
+                BtorBvDomain *d_cout,
                 BtorBvDomain **res_d_x,
                 BtorBvDomain **res_d_y,
                 BtorBvDomain **res_d_z,
-                BtorBvDomain **res_d_cout_msb,
+                BtorBvDomain **res_d_cout,
                 bool no_overflows)
 {
   assert (mm);
@@ -1639,7 +1640,7 @@ bvprop_add_aux (BtorMemMgr *mm,
   assert (res_d_x);
   assert (res_d_y);
   assert (res_d_z);
-  assert (res_d_cout_msb);
+  assert (res_d_cout);
 
   bool progress, res;
   uint32_t bw;
@@ -1664,8 +1665,9 @@ bvprop_add_aux (BtorMemMgr *mm,
   /* cin = x...x0 */
   tmp_cin = btor_bvprop_new_init (mm, bw);
   btor_bv_set_bit (tmp_cin->hi, 0, 0);
-  /* cout = x...x */
-  tmp_cout = btor_bvprop_new_init (mm, bw);
+  /* cout = x...x if not given */
+  tmp_cout = d_cout ? btor_bvprop_new (mm, d_cout->lo, d_cout->hi)
+                    : btor_bvprop_new_init (mm, bw);
 
   /**
    * full adder:
@@ -1932,27 +1934,16 @@ bvprop_add_aux (BtorMemMgr *mm,
   assert (btor_bvprop_is_valid (mm, tmp_z));
 
 DONE:
-  *res_d_x = tmp_x;
-  *res_d_y = tmp_y;
-  *res_d_z = tmp_z;
-  if (tmp_cout_msb)
-  {
-    *res_d_cout_msb = tmp_cout_msb;
-  }
-  else
-  {
-    BtorBitVector *lo = btor_bv_slice (mm, tmp_cout->lo, bw - 1, bw - 1);
-    BtorBitVector *hi = btor_bv_slice (mm, tmp_cout->hi, bw - 1, bw - 1);
-    *res_d_cout_msb   = btor_bvprop_new (mm, lo, hi);
-    btor_bv_free (mm, lo);
-    btor_bv_free (mm, hi);
-  }
+  *res_d_x    = tmp_x;
+  *res_d_y    = tmp_y;
+  *res_d_z    = tmp_z;
+  *res_d_cout = tmp_cout;
 
   btor_bvprop_free (mm, tmp_cin);
-  btor_bvprop_free (mm, tmp_cout);
   btor_bvprop_free (mm, tmp_x_xor_y);
   btor_bvprop_free (mm, tmp_x_and_y);
   btor_bvprop_free (mm, tmp_cin_and_x_xor_y);
+  if (tmp_cout_msb) btor_bvprop_free (mm, tmp_cout_msb);
   if (d_one) btor_bvprop_free (mm, d_one);
 
   btor_bv_free (mm, one);
@@ -1971,10 +1962,18 @@ btor_bvprop_add_aux (BtorMemMgr *mm,
                      bool no_overflows)
 {
   bool res;
-  BtorBvDomain *res_d_carry;
-  res = bvprop_add_aux (
-      mm, d_x, d_y, d_z, res_d_x, res_d_y, res_d_z, &res_d_carry, no_overflows);
-  btor_bvprop_free (mm, res_d_carry);
+  BtorBvDomain *res_d_cout;
+  res = bvprop_add_aux (mm,
+                        d_x,
+                        d_y,
+                        d_z,
+                        0,
+                        res_d_x,
+                        res_d_y,
+                        res_d_z,
+                        &res_d_cout,
+                        no_overflows);
+  btor_bvprop_free (mm, res_d_cout);
   return res;
 }
 
@@ -2337,5 +2336,296 @@ DONE:
   BTOR_RELEASE_STACK (d_ite_stack);
   BTOR_RELEASE_STACK (d_add_stack);
   BTOR_RELEASE_STACK (shift_stack);
+  return res;
+}
+
+bool
+btor_bvprop_ult (BtorMemMgr *mm,
+                 BtorBvDomain *d_x,
+                 BtorBvDomain *d_y,
+                 BtorBvDomain *d_z,
+                 BtorBvDomain **res_d_x,
+                 BtorBvDomain **res_d_y,
+                 BtorBvDomain **res_d_z)
+{
+  assert (mm);
+  assert (d_x);
+  assert (btor_bvprop_is_valid (mm, d_x));
+  assert (d_y);
+  assert (btor_bvprop_is_valid (mm, d_y));
+  assert (d_z);
+  assert (btor_bvprop_is_valid (mm, d_z));
+
+  bool progress, res;
+  uint32_t bw;
+  BtorBitVector *one;
+  BtorBvDomain *tmp_add_1, *tmp_add_2;
+  BtorBvDomain *tmp_cout_1, *tmp_cout_msb_1, *tmp_cout_2, *tmp_cout_msb_2;
+  BtorBvDomain *tmp_x, *tmp_y, *tmp_not_y, *tmp_z, *tmp_cout_msb;
+  BtorBvDomain *res_d_cout;
+  BtorBvDomain *d_one;
+
+  res = true;
+
+  bw = d_x->lo->width;
+  assert (bw == d_x->hi->width);
+  assert (bw == d_y->lo->width);
+  assert (bw == d_y->hi->width);
+  assert (d_z->lo->width == 1);
+  assert (d_z->hi->width == 1);
+
+  /**
+   * z_[1] = x_[bw] < y_[bw]
+   *       = ~(cout(x - y))[MSB:MSB]
+   *       = ~(cout(x + (~y + 1)))[MSB:MSB]
+   *       = ~(cout(~y + 1)[MSB:MSB] | cout(x + (~y + 1))[MSB:MSB]) */
+
+  tmp_x = btor_bvprop_new (mm, d_x->lo, d_x->hi);
+  tmp_y = btor_bvprop_new (mm, d_y->lo, d_y->hi);
+  tmp_z = btor_bvprop_new (mm, d_z->lo, d_z->hi);
+
+  tmp_not_y  = btor_bvprop_new_init (mm, bw);
+  tmp_add_1  = btor_bvprop_new_init (mm, bw);
+  tmp_add_2  = btor_bvprop_new_init (mm, bw);
+  tmp_cout_1 = btor_bvprop_new_init (mm, bw);
+  tmp_cout_2 = btor_bvprop_new_init (mm, bw);
+
+  tmp_cout_msb   = btor_bvprop_new_init (mm, 1);
+  tmp_cout_msb_1 = btor_bvprop_new_init (mm, 1);
+  tmp_cout_msb_2 = btor_bvprop_new_init (mm, 1);
+
+  one   = btor_bv_one (mm, bw);
+  d_one = btor_bvprop_new (mm, one, one);
+
+  do
+  {
+    progress = false;
+
+    /* not_y = ~y */
+    if (!btor_bvprop_not (mm, tmp_y, tmp_not_y, res_d_x, res_d_z))
+    {
+      res = false;
+      btor_bvprop_free (mm, *res_d_x);
+      btor_bvprop_free (mm, *res_d_z);
+      goto DONE;
+    }
+    assert (btor_bvprop_is_valid (mm, *res_d_x));
+    assert (btor_bvprop_is_valid (mm, *res_d_z));
+    if (!progress)
+    {
+      progress =
+          made_progress (tmp_y, 0, tmp_not_y, 0, *res_d_x, 0, *res_d_z, 0);
+    }
+    btor_bvprop_free (mm, tmp_y);
+    btor_bvprop_free (mm, tmp_not_y);
+    tmp_y     = *res_d_x;
+    tmp_not_y = *res_d_z;
+
+    /* (add_1, cout_1) = not_y + 1 */
+    if (!bvprop_add_aux (mm,
+                         tmp_not_y,
+                         d_one,
+                         tmp_add_1,
+                         tmp_cout_1,
+                         res_d_x,
+                         res_d_y,
+                         res_d_z,
+                         &res_d_cout,
+                         false))
+    {
+      res = false;
+      btor_bvprop_free (mm, *res_d_x);
+      btor_bvprop_free (mm, *res_d_y);
+      btor_bvprop_free (mm, *res_d_z);
+      btor_bvprop_free (mm, res_d_cout);
+      goto DONE;
+    }
+    assert (btor_bvprop_is_valid (mm, *res_d_x));
+    assert (btor_bvprop_is_valid (mm, *res_d_y));
+    assert (btor_bvprop_is_valid (mm, *res_d_z));
+    assert (btor_bvprop_is_valid (mm, res_d_cout));
+    assert (!btor_bv_compare (d_one->lo, (*res_d_y)->lo));
+    assert (!btor_bv_compare (d_one->hi, (*res_d_y)->hi));
+    if (!progress)
+    {
+      progress = made_progress (tmp_not_y,
+                                d_one,
+                                tmp_add_1,
+                                tmp_cout_1,
+                                *res_d_x,
+                                *res_d_y,
+                                *res_d_z,
+                                res_d_cout);
+    }
+    btor_bvprop_free (mm, tmp_not_y);
+    btor_bvprop_free (mm, tmp_add_1);
+    btor_bvprop_free (mm, tmp_cout_1);
+    tmp_not_y = *res_d_x;
+    btor_bvprop_free (mm, *res_d_y);
+    tmp_add_1  = *res_d_z;
+    tmp_cout_1 = res_d_cout;
+
+    /* (add_2, cout_2) = x + add_1 */
+    if (!bvprop_add_aux (mm,
+                         tmp_x,
+                         tmp_add_1,
+                         tmp_add_2,
+                         tmp_cout_2,
+                         res_d_x,
+                         res_d_y,
+                         res_d_z,
+                         &res_d_cout,
+                         false))
+    {
+      res = false;
+      btor_bvprop_free (mm, *res_d_x);
+      btor_bvprop_free (mm, *res_d_y);
+      btor_bvprop_free (mm, *res_d_z);
+      btor_bvprop_free (mm, res_d_cout);
+      goto DONE;
+    }
+    assert (btor_bvprop_is_valid (mm, *res_d_x));
+    assert (btor_bvprop_is_valid (mm, *res_d_y));
+    assert (btor_bvprop_is_valid (mm, *res_d_z));
+    assert (btor_bvprop_is_valid (mm, res_d_cout));
+    if (!progress)
+    {
+      progress = made_progress (tmp_x,
+                                tmp_add_1,
+                                tmp_add_2,
+                                tmp_cout_2,
+                                *res_d_x,
+                                *res_d_y,
+                                *res_d_z,
+                                res_d_cout);
+    }
+    btor_bvprop_free (mm, tmp_x);
+    btor_bvprop_free (mm, tmp_add_1);
+    btor_bvprop_free (mm, tmp_add_2);
+    btor_bvprop_free (mm, tmp_cout_2);
+    tmp_x      = *res_d_x;
+    tmp_add_1  = *res_d_y;
+    tmp_add_2  = *res_d_z;
+    tmp_cout_2 = res_d_cout;
+
+    /* cout_msb_1 = cout(add_1)[MSB:MSB] */
+    if (!btor_bvprop_slice (
+            mm, tmp_cout_1, tmp_cout_msb_1, bw - 1, bw - 1, res_d_x, res_d_z))
+    {
+      res = false;
+      btor_bvprop_free (mm, *res_d_x);
+      btor_bvprop_free (mm, *res_d_z);
+      goto DONE;
+    }
+    assert (btor_bvprop_is_valid (mm, *res_d_x));
+    assert (btor_bvprop_is_valid (mm, *res_d_z));
+    if (!progress)
+    {
+      progress = made_progress (
+          tmp_cout_1, 0, tmp_cout_msb_1, 0, *res_d_x, 0, *res_d_z, 0);
+    }
+    btor_bvprop_free (mm, tmp_cout_1);
+    btor_bvprop_free (mm, tmp_cout_msb_1);
+    tmp_cout_1     = *res_d_x;
+    tmp_cout_msb_1 = *res_d_z;
+
+    /* cout_msb_2 = cout(add_2))[MSB:MSB] */
+    if (!btor_bvprop_slice (
+            mm, tmp_cout_2, tmp_cout_msb_2, bw - 1, bw - 1, res_d_x, res_d_z))
+    {
+      res = false;
+      btor_bvprop_free (mm, *res_d_x);
+      btor_bvprop_free (mm, *res_d_z);
+      goto DONE;
+    }
+    assert (btor_bvprop_is_valid (mm, *res_d_x));
+    assert (btor_bvprop_is_valid (mm, *res_d_z));
+    if (!progress)
+    {
+      progress = made_progress (
+          tmp_cout_2, 0, tmp_cout_msb_2, 0, *res_d_x, 0, *res_d_z, 0);
+    }
+    btor_bvprop_free (mm, tmp_cout_2);
+    btor_bvprop_free (mm, tmp_cout_msb_2);
+    tmp_cout_2     = *res_d_x;
+    tmp_cout_msb_2 = *res_d_z;
+
+    /* cout_msb = cout_msb_1 | cout_msb_2 */
+    if (!btor_bvprop_or (mm,
+                         tmp_cout_msb_1,
+                         tmp_cout_msb_2,
+                         tmp_cout_msb,
+                         res_d_x,
+                         res_d_y,
+                         res_d_z))
+    {
+      res = false;
+      btor_bvprop_free (mm, *res_d_x);
+      btor_bvprop_free (mm, *res_d_y);
+      btor_bvprop_free (mm, *res_d_z);
+      goto DONE;
+    }
+    assert (btor_bvprop_is_valid (mm, *res_d_x));
+    assert (btor_bvprop_is_valid (mm, *res_d_y));
+    assert (btor_bvprop_is_valid (mm, *res_d_z));
+    if (!progress)
+    {
+      progress = made_progress (tmp_cout_msb_1,
+                                tmp_cout_msb_2,
+                                tmp_cout_msb,
+                                0,
+                                *res_d_x,
+                                *res_d_y,
+                                *res_d_z,
+                                0);
+    }
+    btor_bvprop_free (mm, tmp_cout_msb_1);
+    btor_bvprop_free (mm, tmp_cout_msb_2);
+    btor_bvprop_free (mm, tmp_cout_msb);
+    tmp_cout_msb_1 = *res_d_x;
+    tmp_cout_msb_2 = *res_d_y;
+    tmp_cout_msb   = *res_d_z;
+
+    /* z = ~cout_msb */
+    if (!btor_bvprop_not (mm, tmp_cout_msb, tmp_z, res_d_x, res_d_z))
+    {
+      res = false;
+      btor_bvprop_free (mm, *res_d_x);
+      btor_bvprop_free (mm, *res_d_z);
+      goto DONE;
+    }
+    assert (btor_bvprop_is_valid (mm, *res_d_x));
+    assert (btor_bvprop_is_valid (mm, *res_d_z));
+    if (!progress)
+    {
+      progress =
+          made_progress (tmp_cout_msb, 0, tmp_z, 0, *res_d_x, 0, *res_d_z, 0);
+    }
+    btor_bvprop_free (mm, tmp_cout_msb);
+    btor_bvprop_free (mm, tmp_z);
+    tmp_cout_msb = *res_d_x;
+    tmp_z        = *res_d_z;
+  } while (progress);
+
+  assert (btor_bvprop_is_valid (mm, tmp_x));
+  assert (btor_bvprop_is_valid (mm, tmp_y));
+  assert (btor_bvprop_is_valid (mm, tmp_z));
+
+DONE:
+  *res_d_x = tmp_x;
+  *res_d_y = tmp_y;
+  *res_d_z = tmp_z;
+
+  btor_bvprop_free (mm, tmp_not_y);
+  btor_bvprop_free (mm, tmp_add_1);
+  btor_bvprop_free (mm, tmp_add_2);
+  btor_bvprop_free (mm, tmp_cout_1);
+  btor_bvprop_free (mm, tmp_cout_2);
+  btor_bvprop_free (mm, tmp_cout_msb);
+  btor_bvprop_free (mm, tmp_cout_msb_1);
+  btor_bvprop_free (mm, tmp_cout_msb_2);
+  btor_bvprop_free (mm, d_one);
+  btor_bv_free (mm, one);
+
   return res;
 }
