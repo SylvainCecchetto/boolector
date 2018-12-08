@@ -2090,13 +2090,14 @@ btor_bvprop_add (BtorMemMgr *mm,
 }
 
 bool
-btor_bvprop_mul (BtorMemMgr *mm,
-                 BtorBvDomain *d_x,
-                 BtorBvDomain *d_y,
-                 BtorBvDomain *d_z,
-                 BtorBvDomain **res_d_x,
-                 BtorBvDomain **res_d_y,
-                 BtorBvDomain **res_d_z)
+btor_bvprop_mul_aux (BtorMemMgr *mm,
+                     BtorBvDomain *d_x,
+                     BtorBvDomain *d_y,
+                     BtorBvDomain *d_z,
+                     BtorBvDomain **res_d_x,
+                     BtorBvDomain **res_d_y,
+                     BtorBvDomain **res_d_z,
+                     bool no_overflows)
 {
   assert (mm);
   assert (d_x);
@@ -2118,12 +2119,14 @@ btor_bvprop_mul (BtorMemMgr *mm,
    *   + ite (y[0:0], x, 0)
    */
 
-  uint32_t i, bw, n;
+  uint32_t i, bw, bwo, n;
   bool res, progress;
-  BtorBitVector *bv;
-  BtorBvDomain *d, *tmp_x, *tmp_y, *tmp_z, *tmp_zero;
+  BtorBitVector *bv, *lo, *hi;
+  BtorBvDomain *d, *d_one, *d_zero;
+  BtorBvDomain *tmp_x, *tmp_y, *tmp_z, *tmp_zero;
   BtorBvDomain **tmp_c, **tmp_shift, **tmp_ite, **tmp0, **tmp1, **tmp_add;
-  BtorBvDomain *tmp_res_c;
+  BtorBvDomain *tmp_res_c, *tmp_slice;
+  BtorBvDomain **tmp;
   BtorBvDomainPtrStack d_c_stack, d_shift_stack, d_ite_stack, d_add_stack;
   BtorBitVectorPtrStack shift_stack;
 
@@ -2142,17 +2145,26 @@ btor_bvprop_mul (BtorMemMgr *mm,
   assert (bw == d_z->lo->width);
   assert (bw == d_z->hi->width);
 
-  bv       = btor_bv_zero (mm, bw);
-  tmp_zero = btor_bvprop_new (mm, bv, bv);
-  btor_bv_free (mm, bv);
+  d_one     = 0;
+  d_zero    = 0;
+  tmp_slice = 0;
 
-  tmp_x = btor_bvprop_new (mm, d_x->lo, d_x->hi);
   tmp_y = btor_bvprop_new (mm, d_y->lo, d_y->hi);
   tmp_z = btor_bvprop_new (mm, d_z->lo, d_z->hi);
 
   if (bw == 1)
   {
-    /* For bit-width 1, multiplication simplifies to d_z = ite (d_y, x, 0) */
+    /**
+     * For bit-width 1, multiplication simplifies to d_z = ite (d_y, x, 0).
+     * No overflows for bit-width 1.
+     */
+
+    tmp_x = btor_bvprop_new (mm, d_x->lo, d_x->hi);
+
+    bv       = btor_bv_zero (mm, bw);
+    tmp_zero = btor_bvprop_new (mm, bv, bv);
+    btor_bv_free (mm, bv);
+
     if (!btor_bvprop_ite (
             mm, d_y, d_x, tmp_zero, d_z, &tmp_res_c, res_d_x, res_d_y, res_d_z))
     {
@@ -2190,6 +2202,43 @@ btor_bvprop_mul (BtorMemMgr *mm,
      * condition), except the last one (the last one is the end result).
      */
 
+    bwo = no_overflows ? 2 * bw : bw;
+
+    if (no_overflows)
+    {
+      /**
+       * no overflows: double the bit-width and assert that the upper half of
+       *               the multiplication result is 0
+       */
+
+      lo    = btor_bv_uext (mm, d_x->lo, d_x->lo->width);
+      hi    = btor_bv_uext (mm, d_x->hi, d_x->hi->width);
+      tmp_x = btor_bvprop_new (mm, lo, hi);
+      btor_bv_free (mm, lo);
+      btor_bv_free (mm, hi);
+
+      tmp_zero     = new_domain (mm);
+      tmp_zero->lo = btor_bv_zero (mm, bwo);
+      tmp_zero->hi = btor_bv_zero (mm, bwo);
+
+      tmp_slice = btor_bvprop_new_init (mm, bw);
+
+      d_zero     = new_domain (mm);
+      d_zero->lo = btor_bv_zero (mm, bw);
+      d_zero->hi = btor_bv_zero (mm, bw);
+
+      d_one     = new_domain (mm);
+      d_one->lo = btor_bv_one (mm, 1);
+      d_one->hi = btor_bv_one (mm, 1);
+    }
+    else
+    {
+      tmp_x        = btor_bvprop_new (mm, d_x->lo, d_x->hi);
+      tmp_zero     = new_domain (mm);
+      tmp_zero->lo = btor_bv_zero (mm, bw);
+      tmp_zero->hi = btor_bv_zero (mm, bw);
+    }
+
     for (i = 0; i < bw; i++)
     {
       n = bw - 1 - i;
@@ -2205,19 +2254,19 @@ btor_bvprop_mul (BtorMemMgr *mm,
       d->hi = btor_bv_slice (mm, d_y->hi, n, n);
       BTOR_PUSH_STACK (d_c_stack, d);
       /* m shift propagators (m = number of 1 or x bits in y) */
-      d = btor_bvprop_new_init (mm, bw);
+      d = btor_bvprop_new_init (mm, bwo);
       BTOR_PUSH_STACK (d_shift_stack, d);
       /* m ite propagators */
-      d = btor_bvprop_new_init (mm, bw);
+      d = btor_bvprop_new_init (mm, bwo);
       BTOR_PUSH_STACK (d_ite_stack, d);
       /* m - 1 add propagators */
       if (BTOR_COUNT_STACK (d_c_stack) > 1)
       {
-        d = btor_bvprop_new_init (mm, bw);
+        d = btor_bvprop_new_init (mm, bwo);
         BTOR_PUSH_STACK (d_add_stack, d);
       }
       /* shift width */
-      bv = btor_bv_uint64_to_bv (mm, n, bw);
+      bv = btor_bv_uint64_to_bv (mm, n, bwo);
       BTOR_PUSH_STACK (shift_stack, bv);
     }
 
@@ -2228,7 +2277,16 @@ btor_bvprop_mul (BtorMemMgr *mm,
     if (BTOR_COUNT_STACK (d_add_stack))
     {
       /* last adder is end result: d_z = add_[m-1]*/
-      d = btor_bvprop_new (mm, d_z->lo, d_z->hi);
+      if (no_overflows)
+      {
+        d     = new_domain (mm);
+        d->lo = btor_bv_uext (mm, d_z->lo, d_z->lo->width);
+        d->hi = btor_bv_uext (mm, d_z->hi, d_z->hi->width);
+      }
+      else
+      {
+        d = btor_bvprop_new (mm, d_z->lo, d_z->hi);
+      }
       btor_bvprop_free (mm, BTOR_POP_STACK (d_add_stack));
       BTOR_PUSH_STACK (d_add_stack, d);
     }
@@ -2241,7 +2299,16 @@ btor_bvprop_mul (BtorMemMgr *mm,
       assert (BTOR_COUNT_STACK (d_ite_stack) == 1);
       if (BTOR_COUNT_STACK (d_ite_stack))
       {
-        d = btor_bvprop_new (mm, d_z->lo, d_z->hi);
+        if (no_overflows)
+        {
+          d     = new_domain (mm);
+          d->lo = btor_bv_uext (mm, d_z->lo, d_z->lo->width);
+          d->hi = btor_bv_uext (mm, d_z->hi, d_z->hi->width);
+        }
+        else
+        {
+          d = btor_bvprop_new (mm, d_z->lo, d_z->hi);
+        }
         btor_bvprop_free (mm, BTOR_POP_STACK (d_ite_stack));
         BTOR_PUSH_STACK (d_ite_stack, d);
       }
@@ -2289,6 +2356,9 @@ btor_bvprop_mul (BtorMemMgr *mm,
         /* ite (y[bw-1-m:bw-1-m], x << bw - 1 - m, 0) */
         tmp_c   = &d_c_stack.start[i];
         tmp_ite = &d_ite_stack.start[i];
+        assert (!no_overflows || (*tmp_shift)->lo->width == bwo);
+        assert (!no_overflows || (tmp_zero)->lo->width == bwo);
+        assert (!no_overflows || (*tmp_ite)->lo->width == bwo);
         if (!btor_bvprop_ite (mm,
                               *tmp_c,
                               *tmp_shift,
@@ -2346,8 +2416,14 @@ btor_bvprop_mul (BtorMemMgr *mm,
           tmp0 = i == 1 ? &d_ite_stack.start[i - 1] : &d_add_stack.start[i - 2];
           tmp1 = tmp_ite;
           tmp_add = &d_add_stack.start[i - 1];
-          if (!btor_bvprop_add (
-                  mm, *tmp0, *tmp1, *tmp_add, res_d_x, res_d_y, res_d_z))
+          if (!btor_bvprop_add_aux (mm,
+                                    *tmp0,
+                                    *tmp1,
+                                    *tmp_add,
+                                    res_d_x,
+                                    res_d_y,
+                                    res_d_z,
+                                    no_overflows))
           {
             res = false;
             btor_bvprop_free (mm, *res_d_x);
@@ -2371,6 +2447,58 @@ btor_bvprop_mul (BtorMemMgr *mm,
           *tmp_add = *res_d_z;
         }
       }
+
+      if (no_overflows)
+      {
+        /* upper half of multiplication result must be 0 */
+        tmp = n > 1 ? &d_add_stack.start[n - 2] : &d_ite_stack.start[0];
+        if (!btor_bvprop_slice (
+                mm, *tmp, tmp_slice, bwo - 1, bw, res_d_x, res_d_z))
+        {
+          res = false;
+          btor_bvprop_free (mm, *res_d_x);
+          btor_bvprop_free (mm, *res_d_z);
+          goto DONE;
+        }
+        assert (btor_bvprop_is_valid (mm, *res_d_x));
+        assert (btor_bvprop_is_valid (mm, *res_d_z));
+        if (!progress)
+        {
+          progress =
+              made_progress (*tmp, 0, tmp_slice, 0, *res_d_x, 0, *res_d_z, 0);
+        }
+        btor_bvprop_free (mm, *tmp);
+        btor_bvprop_free (mm, tmp_slice);
+        *tmp      = *res_d_x;
+        tmp_slice = *res_d_z;
+        assert (!no_overflows || (*tmp)->lo->width == bwo);
+
+        if (!btor_bvprop_eq (
+                mm, tmp_slice, d_zero, d_one, res_d_x, res_d_y, res_d_z))
+        {
+          res = false;
+          btor_bvprop_free (mm, *res_d_x);
+          btor_bvprop_free (mm, *res_d_y);
+          btor_bvprop_free (mm, *res_d_z);
+          goto DONE;
+        }
+        assert (btor_bvprop_is_valid (mm, *res_d_x));
+        assert (btor_bvprop_is_valid (mm, *res_d_y));
+        assert (!btor_bv_compare (d_zero->lo, (*res_d_y)->lo));
+        assert (!btor_bv_compare (d_zero->hi, (*res_d_y)->hi));
+        assert (btor_bvprop_is_valid (mm, *res_d_z));
+        assert (!btor_bv_compare (d_one->lo, (*res_d_z)->lo));
+        assert (!btor_bv_compare (d_one->hi, (*res_d_z)->hi));
+        if (!progress)
+        {
+          progress = made_progress (
+              tmp_slice, d_zero, d_one, 0, *res_d_x, *res_d_y, *res_d_z, 0);
+        }
+        btor_bvprop_free (mm, tmp_slice);
+        tmp_slice = *res_d_x;
+        btor_bvprop_free (mm, *res_d_y);
+        btor_bvprop_free (mm, *res_d_z);
+      }
     } while (progress);
 
     /* Collect y bits into the result for d_y. */
@@ -2392,27 +2520,40 @@ btor_bvprop_mul (BtorMemMgr *mm,
     /* Result for d_z. */
     btor_bvprop_free (mm, tmp_z);
     tmp_z = new_domain (mm);
-    if (n > 1)
+    tmp   = n > 1 ? &d_add_stack.start[n - 2] : &d_ite_stack.start[0];
+    if (no_overflows)
     {
-      tmp_z->lo = btor_bv_copy (mm, d_add_stack.start[n - 2]->lo);
-      tmp_z->hi = btor_bv_copy (mm, d_add_stack.start[n - 2]->hi);
+      tmp_z->lo = btor_bv_slice (mm, (*tmp)->lo, bw - 1, 0);
+      tmp_z->hi = btor_bv_slice (mm, (*tmp)->hi, bw - 1, 0);
     }
     else
     {
-      assert (n == 1);
-      tmp_z->lo = btor_bv_copy (mm, d_ite_stack.start[0]->lo);
-      tmp_z->hi = btor_bv_copy (mm, d_ite_stack.start[0]->hi);
+      tmp_z->lo = btor_bv_copy (mm, (*tmp)->lo);
+      tmp_z->hi = btor_bv_copy (mm, (*tmp)->hi);
     }
   }
   assert (btor_bvprop_is_valid (mm, tmp_x));
   assert (btor_bvprop_is_valid (mm, tmp_y));
   assert (btor_bvprop_is_valid (mm, tmp_z));
 DONE:
+  if (bw > 1 && no_overflows)
+  {
+    lo = btor_bv_slice (mm, tmp_x->lo, bw - 1, 0);
+    hi = btor_bv_slice (mm, tmp_x->hi, bw - 1, 0);
+    btor_bvprop_free (mm, tmp_x);
+    tmp_x     = new_domain (mm);
+    tmp_x->lo = lo;
+    tmp_x->hi = hi;
+  }
+
   *res_d_x = tmp_x;
   *res_d_y = tmp_y;
   *res_d_z = tmp_z;
 
   btor_bvprop_free (mm, tmp_zero);
+  if (tmp_slice) btor_bvprop_free (mm, tmp_slice);
+  if (d_one) btor_bvprop_free (mm, d_one);
+  if (d_zero) btor_bvprop_free (mm, d_zero);
 
   for (i = 0, n = BTOR_COUNT_STACK (d_c_stack); i < n; i++)
   {
@@ -2436,6 +2577,19 @@ DONE:
   BTOR_RELEASE_STACK (d_add_stack);
   BTOR_RELEASE_STACK (shift_stack);
   return res;
+}
+
+bool
+btor_bvprop_mul (BtorMemMgr *mm,
+                 BtorBvDomain *d_x,
+                 BtorBvDomain *d_y,
+                 BtorBvDomain *d_z,
+                 BtorBvDomain **res_d_x,
+                 BtorBvDomain **res_d_y,
+                 BtorBvDomain **res_d_z)
+{
+  return btor_bvprop_mul_aux (
+      mm, d_x, d_y, d_z, res_d_x, res_d_y, res_d_z, false);
 }
 
 bool

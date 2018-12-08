@@ -1640,7 +1640,7 @@ add_bvprop (uint32_t bw, bool no_overflows)
 }
 
 void
-mul_bvprop (uint32_t bw)
+mul_bvprop (uint32_t bw, bool no_overflows)
 {
   bool res;
   uint32_t num_consts;
@@ -1661,7 +1661,8 @@ mul_bvprop (uint32_t bw)
       {
         d_y = create_domain (consts[k]);
 
-        res = btor_bvprop_mul (g_mm, d_x, d_y, d_z, &res_x, &res_y, &res_z);
+        res = btor_bvprop_mul_aux (
+            g_mm, d_x, d_y, d_z, &res_x, &res_y, &res_z, no_overflows);
         check_sat (d_x,
                    d_y,
                    d_z,
@@ -1672,7 +1673,7 @@ mul_bvprop (uint32_t bw)
                    0,
                    0,
                    boolector_mul,
-                   0,
+                   no_overflows ? boolector_umulo : 0,
                    0,
                    0,
                    0,
@@ -1689,8 +1690,9 @@ mul_bvprop (uint32_t bw)
             tmp = btor_bv_mul (g_mm, res_x->lo, res_y->lo);
             assert (!btor_bv_compare (d_x->lo, res_x->lo));
             assert (!btor_bv_compare (d_y->lo, res_y->lo));
-            assert (btor_bvprop_is_fixed (g_mm, res_z));
-            assert (!btor_bv_compare (tmp, res_z->lo));
+            assert (no_overflows || btor_bvprop_is_fixed (g_mm, res_z));
+            assert (!btor_bvprop_is_fixed (g_mm, res_z)
+                    || !btor_bv_compare (tmp, res_z->lo));
             btor_bv_free (g_mm, tmp);
           }
           else if (btor_bvprop_is_fixed (g_mm, d_z))
@@ -1924,9 +1926,12 @@ test_ult_bvprop ()
 void
 test_mul_bvprop ()
 {
-  mul_bvprop (1);
-  mul_bvprop (2);
-  mul_bvprop (3);
+  mul_bvprop (1, false);
+  mul_bvprop (2, false);
+  mul_bvprop (3, false);
+  mul_bvprop (1, true);
+  mul_bvprop (2, true);
+  mul_bvprop (3, true);
 }
 
 /*------------------------------------------------------------------------*/
