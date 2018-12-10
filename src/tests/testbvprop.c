@@ -1196,6 +1196,15 @@ and_or_xor_bvprop_aux (int32_t op, uint32_t bw)
             {
               assert (str_z[l] != '1' || (str_x[l] != '0' && str_y[l] != '0'));
               assert (str_z[l] != '0' || (str_x[l] != '1' || str_y[l] != '1'));
+
+              assert (str_z[l] != '1' || str_x[l] != '1'
+                      || str_res_y[l] == '1');
+              assert (str_z[l] != '1' || str_y[l] != '1'
+                      || str_res_x[l] == '1');
+              assert (str_z[l] != '0' || str_x[l] != '1'
+                      || str_res_y[l] == '0');
+              assert (str_z[l] != '0' || str_y[l] != '1'
+                      || str_res_x[l] == '0');
             }
             else if (op == TEST_BVPROP_OR)
             {
@@ -1219,6 +1228,19 @@ and_or_xor_bvprop_aux (int32_t op, uint32_t bw)
               assert (str_z[l] != '0'
                       || ((str_x[l] != '0' || str_y[l] != '1')
                           && (str_x[l] != '1' || str_y[l] != '0')));
+
+              assert (str_z[l] != '1' || str_x[l] != '1'
+                      || str_res_y[l] == '0');
+              assert (str_z[l] != '1' || str_y[l] != '1'
+                      || str_res_x[l] == '0');
+              assert (str_z[l] != '0' || str_x[l] != '0'
+                      || str_res_y[l] == '0');
+              assert (str_z[l] != '0' || str_y[l] != '0'
+                      || str_res_x[l] == '0');
+              assert (str_z[l] != '0' || str_x[l] != '1'
+                      || str_res_y[l] == '1');
+              assert (str_z[l] != '0' || str_y[l] != '1'
+                      || str_res_x[l] == '1');
             }
           }
         }
