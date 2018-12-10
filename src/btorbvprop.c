@@ -840,7 +840,7 @@ btor_bvprop_or (BtorMemMgr *mm,
 
   /* lo_y' = lo_y | (~hi_x & lo_z) */
   tmp0           = btor_bv_not (mm, d_x->hi);
-  tmp1           = btor_bv_and (mm, tmp0, d_x->lo);
+  tmp1           = btor_bv_and (mm, tmp0, d_z->lo);
   (*res_d_y)->lo = btor_bv_or (mm, d_y->lo, tmp1);
   btor_bv_free (mm, tmp0);
   btor_bv_free (mm, tmp1);
