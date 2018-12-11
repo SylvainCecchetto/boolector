@@ -753,6 +753,7 @@ eq_bvprop (uint32_t bw)
   uint32_t num_consts;
   const char *values_z[] = {"x", "0", "1"};
   BtorBvDomain *d_x, *d_y, *d_z, *res_x, *res_y, *res_z;
+  BtorBitVector *tmp;
 
   num_consts = generate_consts (bw, &consts);
 
@@ -765,8 +766,8 @@ eq_bvprop (uint32_t bw)
       for (size_t j = 0; j < num_consts; j++)
       {
         d_y = create_domain (consts[j]);
-        res = btor_bvprop_eq (g_mm, d_x, d_y, d_z, &res_x, &res_y, &res_z);
 
+        res = btor_bvprop_eq (g_mm, d_x, d_y, d_z, &res_x, &res_y, &res_z);
         check_sat (d_x,
                    d_y,
                    d_z,
@@ -784,10 +785,37 @@ eq_bvprop (uint32_t bw)
                    true,
                    res);
 
+        if (res && btor_bvprop_is_fixed (g_mm, d_x)
+            && btor_bvprop_is_fixed (g_mm, d_y))
+        {
+          assert (btor_bvprop_is_fixed (g_mm, res_x));
+          assert (btor_bvprop_is_fixed (g_mm, res_y));
+          if (is_xxx_domain (g_mm, d_z))
+          {
+            tmp = btor_bv_eq (g_mm, res_x->lo, res_y->lo);
+            assert (!btor_bv_compare (d_x->lo, res_x->lo));
+            assert (!btor_bv_compare (d_y->lo, res_y->lo));
+            assert (btor_bvprop_is_fixed (g_mm, res_z));
+            assert (!btor_bv_compare (tmp, res_z->lo));
+            btor_bv_free (g_mm, tmp);
+          }
+          else if (btor_bvprop_is_fixed (g_mm, d_z))
+          {
+            assert (btor_bvprop_is_fixed (g_mm, res_z));
+            tmp = btor_bv_eq (g_mm, d_x->lo, d_y->lo);
+            if (!btor_bv_compare (tmp, d_z->lo))
+            {
+              assert (!btor_bv_compare (d_x->lo, res_x->lo));
+              assert (!btor_bv_compare (d_y->lo, res_y->lo));
+              btor_bv_free (g_mm, tmp);
+              tmp = btor_bv_eq (g_mm, res_x->lo, res_y->lo);
+              assert (!btor_bv_compare (tmp, res_z->lo));
+            }
+            btor_bv_free (g_mm, tmp);
+          }
+        }
         btor_bvprop_free (g_mm, d_y);
-        btor_bvprop_free (g_mm, res_x);
-        btor_bvprop_free (g_mm, res_y);
-        btor_bvprop_free (g_mm, res_z);
+        TEST_BVPROP_RELEASE_RES_XYZ;
       }
       btor_bvprop_free (g_mm, d_x);
     }

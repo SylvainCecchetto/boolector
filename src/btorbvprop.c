@@ -250,36 +250,36 @@ btor_bvprop_eq (BtorMemMgr *mm,
   }
 
   /* lo_z = lo_z | redand((lo_x & lo_y) | (~hi_x & ~hi_y))
-   * hi_z = hi_z & ~redand((lo_x & ~hi_y) | (~hi_x & lo_y))
+   * hi_z = hi_z & ~redor((lo_x & ~hi_y) | (~hi_x & lo_y))
    */
   if (valid)
   {
-    BtorBitVector *lo_x_and_lo_y, *hi_x_and_hi_y, * or, *redand;
+    BtorBitVector *lo_x_and_lo_y, *hi_x_and_hi_y, * or, *red;
     tmp           = new_domain (mm);
     lo_x_and_lo_y = btor_bv_and (mm, d_x->lo, d_y->lo);
     hi_x_and_hi_y = btor_bv_and (mm, not_hi_x, not_hi_y);
     or            = btor_bv_or (mm, lo_x_and_lo_y, hi_x_and_hi_y);
-    redand        = btor_bv_redand (mm, or);
-    tmp->lo       = btor_bv_or (mm, d_z->lo, redand);
+    red           = btor_bv_redand (mm, or);
+    tmp->lo       = btor_bv_or (mm, d_z->lo, red);
 
     btor_bv_free (mm, lo_x_and_lo_y);
     btor_bv_free (mm, hi_x_and_hi_y);
     btor_bv_free (mm, or);
-    btor_bv_free (mm, redand);
+    btor_bv_free (mm, red);
 
-    BtorBitVector *lo_x_and_hi_y, *hi_x_and_lo_y, *not_redand;
+    BtorBitVector *lo_x_and_hi_y, *hi_x_and_lo_y, *not_red;
     lo_x_and_hi_y = btor_bv_and (mm, d_x->lo, not_hi_y);
     hi_x_and_lo_y = btor_bv_and (mm, not_hi_x, d_y->lo);
     or            = btor_bv_or (mm, lo_x_and_hi_y, hi_x_and_lo_y);
-    redand        = btor_bv_redand (mm, or);
-    not_redand    = btor_bv_not (mm, redand);
-    tmp->hi       = btor_bv_and (mm, d_z->hi, not_redand);
+    red           = btor_bv_redor (mm, or);
+    not_red       = btor_bv_not (mm, red);
+    tmp->hi       = btor_bv_and (mm, d_z->hi, not_red);
 
     btor_bv_free (mm, lo_x_and_hi_y);
     btor_bv_free (mm, hi_x_and_lo_y);
     btor_bv_free (mm, or);
-    btor_bv_free (mm, redand);
-    btor_bv_free (mm, not_redand);
+    btor_bv_free (mm, red);
+    btor_bv_free (mm, not_red);
 
     valid = valid & btor_bvprop_is_valid (mm, tmp);
   }
