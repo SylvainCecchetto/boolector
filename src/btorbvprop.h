@@ -38,7 +38,9 @@ bool btor_bvprop_is_valid (BtorMemMgr *mm, const BtorBvDomain *d);
 /* Check whether bit-vector domain is fixed, i.e., lo == hi */
 bool btor_bvprop_is_fixed (BtorMemMgr *mm, const BtorBvDomain *d);
 
-/* Propagate domains 'd_x', 'd_y', and 'd_z' of z = (x = y).  */
+/* Propagate domains 'd_x', 'd_y', and 'd_z' of z = (x = y).
+ * If 'res_d_*' is NULL no result will be stored. Note that the propagator will
+ * stop propagating as soon as one invalid domain was computed. */
 bool btor_bvprop_eq (BtorMemMgr *mm,
                      BtorBvDomain *d_x,
                      BtorBvDomain *d_y,
