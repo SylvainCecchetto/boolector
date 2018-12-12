@@ -1752,7 +1752,6 @@ bvprop_add_aux (BtorMemMgr *mm,
   assert (res_d_x);
   assert (res_d_y);
   assert (res_d_z);
-  assert (res_d_cout);
 
   bool progress, res;
   uint32_t bw;
@@ -2049,7 +2048,11 @@ DONE:
   *res_d_x    = tmp_x;
   *res_d_y    = tmp_y;
   *res_d_z    = tmp_z;
-  *res_d_cout = tmp_cout;
+
+  if (res_d_cout)
+    *res_d_cout = tmp_cout;
+  else
+    btor_bvprop_free (mm, tmp_cout);
 
   btor_bvprop_free (mm, tmp_cin);
   btor_bvprop_free (mm, tmp_x_xor_y);
@@ -2074,18 +2077,8 @@ btor_bvprop_add_aux (BtorMemMgr *mm,
                      bool no_overflows)
 {
   bool res;
-  BtorBvDomain *res_d_cout;
-  res = bvprop_add_aux (mm,
-                        d_x,
-                        d_y,
-                        d_z,
-                        0,
-                        res_d_x,
-                        res_d_y,
-                        res_d_z,
-                        &res_d_cout,
-                        no_overflows);
-  btor_bvprop_free (mm, res_d_cout);
+  res = bvprop_add_aux (
+      mm, d_x, d_y, d_z, 0, res_d_x, res_d_y, res_d_z, 0, no_overflows);
   return res;
 }
 
@@ -2892,6 +2885,322 @@ DONE:
   btor_bvprop_free (mm, tmp_cout_msb_2);
   btor_bvprop_free (mm, d_one);
   btor_bv_free (mm, one);
+
+  return res;
+}
+
+bool
+btor_bvprop_udiv (BtorMemMgr *mm,
+                  BtorBvDomain *d_x,
+                  BtorBvDomain *d_y,
+                  BtorBvDomain *d_z,
+                  BtorBvDomain **res_d_x,
+                  BtorBvDomain **res_d_y,
+                  BtorBvDomain **res_d_z)
+{
+  assert (mm);
+  assert (d_x);
+  assert (btor_bvprop_is_valid (mm, d_x));
+  assert (d_y);
+  assert (btor_bvprop_is_valid (mm, d_y));
+  assert (d_z);
+  assert (btor_bvprop_is_valid (mm, d_z));
+
+  bool progress, res;
+  uint32_t bw;
+  BtorBvDomain *tmp_x, *tmp_y, *tmp_z;
+  BtorBvDomain *tmp_m, *tmp_r, *tmp_eq_y, *tmp_not_eq_y, *tmp_eq_z, *tmp_ite;
+  BtorBvDomain *res_d_c;
+  BtorBvDomain *d_one, *d_zero, *d_zero_bw, *d_ones_bw;
+
+  res = true;
+
+  bw = d_x->lo->width;
+  assert (bw == d_x->hi->width);
+  assert (bw == d_y->lo->width);
+  assert (bw == d_y->hi->width);
+  assert (bw == d_z->lo->width);
+  assert (bw == d_z->hi->width);
+
+  /**
+   * z_[bw] = x_[bw] / y_[bw]
+   * <->
+   * m_[bw]   = y_[bw] * z_[bw]  (no overflows!)
+   * x_[bw]   = m_[bw] + r_[bw]  (no overflows!)
+   * eq_y_[1] = y_[bw] = 0_[bw]
+   * ite_[1]  = eq_y_[1] ? 0_[1] : 1_[1]
+   * ite_[1]  = r_[bw] <_u y_[bw]
+   * 1_[1]    = ~eq_[1] | z_[bw] == ~0_[bw]
+   *
+   * Note: [1] does not interpret div-by-zero as defined by the standard,
+   *       but treats the operation as undefined if divisor is 0.
+   *       The propagator above is fixed w.r.t. to the standardized behavior.
+   */
+
+  tmp_x = btor_bvprop_new (mm, d_x->lo, d_x->hi);
+  tmp_y = btor_bvprop_new (mm, d_y->lo, d_y->hi);
+  tmp_z = btor_bvprop_new (mm, d_z->lo, d_z->hi);
+
+  tmp_m = btor_bvprop_new_init (mm, bw);
+  tmp_r = btor_bvprop_new_init (mm, bw);
+
+  tmp_eq_y     = btor_bvprop_new_init (mm, 1);
+  tmp_not_eq_y = btor_bvprop_new_init (mm, 1);
+  tmp_eq_z     = btor_bvprop_new_init (mm, 1);
+  tmp_ite      = btor_bvprop_new_init (mm, 1);
+
+  d_one     = new_domain (mm);
+  d_one->lo = btor_bv_one (mm, 1);
+  d_one->hi = btor_bv_one (mm, 1);
+
+  d_zero     = new_domain (mm);
+  d_zero->lo = btor_bv_zero (mm, 1);
+  d_zero->hi = btor_bv_zero (mm, 1);
+
+  d_zero_bw     = new_domain (mm);
+  d_zero_bw->lo = btor_bv_zero (mm, bw);
+  d_zero_bw->hi = btor_bv_zero (mm, bw);
+
+  d_ones_bw     = new_domain (mm);
+  d_ones_bw->lo = btor_bv_ones (mm, bw);
+  d_ones_bw->hi = btor_bv_ones (mm, bw);
+
+  do
+  {
+    progress = false;
+
+    /* m = y * z (no overflows) */
+    if (!btor_bvprop_mul_aux (
+            mm, tmp_y, tmp_z, tmp_m, res_d_x, res_d_y, res_d_z, true))
+    {
+      res = false;
+      btor_bvprop_free (mm, *res_d_x);
+      btor_bvprop_free (mm, *res_d_y);
+      btor_bvprop_free (mm, *res_d_z);
+      goto DONE;
+    }
+    assert (btor_bvprop_is_valid (mm, *res_d_x));
+    assert (btor_bvprop_is_valid (mm, *res_d_y));
+    assert (btor_bvprop_is_valid (mm, *res_d_z));
+    if (!progress)
+    {
+      progress = made_progress (
+          tmp_y, tmp_z, tmp_m, 0, *res_d_x, *res_d_y, *res_d_z, 0);
+    }
+    btor_bvprop_free (mm, tmp_y);
+    btor_bvprop_free (mm, tmp_z);
+    btor_bvprop_free (mm, tmp_m);
+    tmp_y = *res_d_x;
+    tmp_z = *res_d_y;
+    tmp_m = *res_d_z;
+
+    /* x = m + r (no overflows) */
+    if (!bvprop_add_aux (
+            mm, tmp_m, tmp_r, tmp_x, 0, res_d_x, res_d_y, res_d_z, 0, true))
+    {
+      res = false;
+      btor_bvprop_free (mm, *res_d_x);
+      btor_bvprop_free (mm, *res_d_y);
+      btor_bvprop_free (mm, *res_d_z);
+      goto DONE;
+    }
+    assert (btor_bvprop_is_valid (mm, *res_d_x));
+    assert (btor_bvprop_is_valid (mm, *res_d_y));
+    assert (btor_bvprop_is_valid (mm, *res_d_z));
+    if (!progress)
+    {
+      progress = made_progress (
+          tmp_m, tmp_r, tmp_x, 0, *res_d_x, *res_d_y, *res_d_z, 0);
+    }
+    btor_bvprop_free (mm, tmp_m);
+    btor_bvprop_free (mm, tmp_r);
+    btor_bvprop_free (mm, tmp_x);
+    tmp_m = *res_d_x;
+    tmp_r = *res_d_y;
+    tmp_x = *res_d_z;
+
+    /* eq_y = y == 0 */
+    if (!btor_bvprop_eq (
+            mm, tmp_y, d_zero_bw, tmp_eq_y, res_d_x, res_d_y, res_d_z))
+    {
+      res = false;
+      btor_bvprop_free (mm, *res_d_x);
+      btor_bvprop_free (mm, *res_d_y);
+      btor_bvprop_free (mm, *res_d_z);
+      goto DONE;
+    }
+    assert (btor_bvprop_is_valid (mm, *res_d_x));
+    assert (btor_bvprop_is_valid (mm, *res_d_y));
+    assert (btor_bvprop_is_valid (mm, *res_d_z));
+    assert (!btor_bv_compare (d_zero_bw->lo, (*res_d_y)->lo));
+    assert (!btor_bv_compare (d_zero_bw->hi, (*res_d_y)->hi));
+    if (!progress)
+    {
+      progress = made_progress (
+          tmp_y, d_zero_bw, tmp_eq_y, 0, *res_d_x, *res_d_y, *res_d_z, 0);
+    }
+    btor_bvprop_free (mm, tmp_y);
+    btor_bvprop_free (mm, tmp_eq_y);
+    tmp_y    = *res_d_x;
+    tmp_eq_y = *res_d_z;
+    btor_bvprop_free (mm, *res_d_y);
+
+    /* ite = eq_y ? 0 : 1 */
+    if (!btor_bvprop_ite (mm,
+                          tmp_eq_y,
+                          d_zero,
+                          d_one,
+                          tmp_ite,
+                          &res_d_c,
+                          res_d_x,
+                          res_d_y,
+                          res_d_z))
+    {
+      res = false;
+      btor_bvprop_free (mm, res_d_c);
+      btor_bvprop_free (mm, *res_d_x);
+      btor_bvprop_free (mm, *res_d_y);
+      btor_bvprop_free (mm, *res_d_z);
+      goto DONE;
+    }
+    assert (btor_bvprop_is_valid (mm, *res_d_x));
+    assert (btor_bvprop_is_valid (mm, *res_d_y));
+    assert (btor_bvprop_is_valid (mm, *res_d_z));
+    assert (btor_bvprop_is_valid (mm, res_d_c));
+    assert (!btor_bv_compare (d_zero->lo, (*res_d_x)->lo));
+    assert (!btor_bv_compare (d_zero->hi, (*res_d_x)->hi));
+    assert (!btor_bv_compare (d_one->lo, (*res_d_y)->lo));
+    assert (!btor_bv_compare (d_one->hi, (*res_d_y)->hi));
+    if (!progress)
+    {
+      progress = made_progress (d_zero,
+                                d_one,
+                                tmp_ite,
+                                tmp_eq_y,
+                                *res_d_x,
+                                *res_d_y,
+                                *res_d_z,
+                                res_d_c);
+    }
+    btor_bvprop_free (mm, *res_d_x);
+    btor_bvprop_free (mm, *res_d_y);
+    btor_bvprop_free (mm, tmp_ite);
+    btor_bvprop_free (mm, tmp_eq_y);
+    tmp_ite  = *res_d_z;
+    tmp_eq_y = res_d_c;
+
+    /* ite = r < y */
+    if (!btor_bvprop_ult (mm, tmp_r, tmp_y, tmp_ite, res_d_x, res_d_y, res_d_z))
+    {
+      res = false;
+      btor_bvprop_free (mm, *res_d_x);
+      btor_bvprop_free (mm, *res_d_y);
+      btor_bvprop_free (mm, *res_d_z);
+      goto DONE;
+    }
+    assert (btor_bvprop_is_valid (mm, *res_d_x));
+    assert (btor_bvprop_is_valid (mm, *res_d_y));
+    assert (btor_bvprop_is_valid (mm, *res_d_z));
+    if (!progress)
+    {
+      progress = made_progress (
+          tmp_r, tmp_y, tmp_ite, 0, *res_d_x, *res_d_y, *res_d_z, 0);
+    }
+    btor_bvprop_free (mm, tmp_r);
+    btor_bvprop_free (mm, tmp_y);
+    btor_bvprop_free (mm, tmp_ite);
+    tmp_r   = *res_d_x;
+    tmp_y   = *res_d_y;
+    tmp_ite = *res_d_z;
+
+    /* not_eq_y = ~eq */
+    if (!btor_bvprop_not (mm, tmp_eq_y, tmp_not_eq_y, res_d_x, res_d_z))
+    {
+      res = false;
+      btor_bvprop_free (mm, *res_d_x);
+      btor_bvprop_free (mm, *res_d_z);
+      goto DONE;
+    }
+    assert (btor_bvprop_is_valid (mm, *res_d_x));
+    assert (btor_bvprop_is_valid (mm, *res_d_z));
+    if (!progress)
+    {
+      progress = made_progress (
+          tmp_eq_y, 0, tmp_not_eq_y, 0, *res_d_x, 0, *res_d_z, 0);
+    }
+    btor_bvprop_free (mm, tmp_eq_y);
+    btor_bvprop_free (mm, tmp_not_eq_y);
+    tmp_eq_y     = *res_d_x;
+    tmp_not_eq_y = *res_d_z;
+
+    /* eq_z = z == ~0 */
+    if (!btor_bvprop_eq (
+            mm, tmp_z, d_ones_bw, tmp_eq_z, res_d_x, res_d_y, res_d_z))
+    {
+      res = false;
+      btor_bvprop_free (mm, *res_d_x);
+      btor_bvprop_free (mm, *res_d_y);
+      btor_bvprop_free (mm, *res_d_z);
+      goto DONE;
+    }
+    assert (btor_bvprop_is_valid (mm, *res_d_x));
+    assert (btor_bvprop_is_valid (mm, *res_d_y));
+    assert (btor_bvprop_is_valid (mm, *res_d_z));
+    assert (!btor_bv_compare (d_ones_bw->lo, (*res_d_y)->lo));
+    assert (!btor_bv_compare (d_ones_bw->hi, (*res_d_y)->hi));
+    if (!progress)
+    {
+      progress = made_progress (
+          tmp_z, d_ones_bw, tmp_eq_z, 0, *res_d_x, *res_d_y, *res_d_z, 0);
+    }
+    btor_bvprop_free (mm, tmp_z);
+    btor_bvprop_free (mm, tmp_eq_z);
+    tmp_z    = *res_d_x;
+    tmp_eq_z = *res_d_z;
+    btor_bvprop_free (mm, *res_d_y);
+
+    /* 1 = not_eq_y | eq_z */
+    if (!btor_bvprop_or (
+            mm, tmp_not_eq_y, tmp_eq_z, d_one, res_d_x, res_d_y, res_d_z))
+    {
+      res = false;
+      btor_bvprop_free (mm, *res_d_x);
+      btor_bvprop_free (mm, *res_d_y);
+      btor_bvprop_free (mm, *res_d_z);
+      goto DONE;
+    }
+    assert (btor_bvprop_is_valid (mm, *res_d_x));
+    assert (btor_bvprop_is_valid (mm, *res_d_y));
+    assert (btor_bvprop_is_valid (mm, *res_d_z));
+    assert (!btor_bv_compare (d_one->lo, (*res_d_z)->lo));
+    assert (!btor_bv_compare (d_one->hi, (*res_d_z)->hi));
+    btor_bvprop_free (mm, tmp_not_eq_y);
+    btor_bvprop_free (mm, tmp_eq_z);
+    tmp_not_eq_y = *res_d_x;
+    tmp_eq_z     = *res_d_y;
+    btor_bvprop_free (mm, *res_d_z);
+
+  } while (progress);
+
+  assert (btor_bvprop_is_valid (mm, tmp_x));
+  assert (btor_bvprop_is_valid (mm, tmp_y));
+  assert (btor_bvprop_is_valid (mm, tmp_z));
+
+DONE:
+  *res_d_x = tmp_x;
+  *res_d_y = tmp_y;
+  *res_d_z = tmp_z;
+
+  btor_bvprop_free (mm, tmp_m);
+  btor_bvprop_free (mm, tmp_r);
+  btor_bvprop_free (mm, tmp_eq_y);
+  btor_bvprop_free (mm, tmp_not_eq_y);
+  btor_bvprop_free (mm, tmp_eq_z);
+  btor_bvprop_free (mm, tmp_ite);
+  btor_bvprop_free (mm, d_one);
+  btor_bvprop_free (mm, d_zero);
+  btor_bvprop_free (mm, d_zero_bw);
+  btor_bvprop_free (mm, d_ones_bw);
 
   return res;
 }
