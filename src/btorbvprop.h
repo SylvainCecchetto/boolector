@@ -23,8 +23,10 @@ typedef struct BtorBvDomain BtorBvDomain;
 /* Create new bit-vector domain of width 'width' with low 0 and high ~0. */
 BtorBvDomain *btor_bvprop_new_init (BtorMemMgr *mm, uint32_t width);
 
-/* Create new bit-vector domain with low 'lo' and high 'hi'.
- * Creates copies of lo and hi. */
+/**
+ * Create new bit-vector domain with low 'lo' and high 'hi'.
+ * Creates copies of lo and hi.
+ */
 BtorBvDomain *btor_bvprop_new (BtorMemMgr *mm,
                                const BtorBitVector *lo,
                                const BtorBitVector *hi);
@@ -38,9 +40,11 @@ bool btor_bvprop_is_valid (BtorMemMgr *mm, const BtorBvDomain *d);
 /* Check whether bit-vector domain is fixed, i.e., lo == hi */
 bool btor_bvprop_is_fixed (BtorMemMgr *mm, const BtorBvDomain *d);
 
-/* Propagate domains 'd_x', 'd_y', and 'd_z' of z = (x = y).
+/**
+ * Propagate domains 'd_x', 'd_y', and 'd_z' of z = (x = y).
  * If 'res_d_*' is NULL no result will be stored. Note that the propagator will
- * stop propagating as soon as one invalid domain was computed. */
+ * stop propagating as soon as one invalid domain was computed.
+ */
 bool btor_bvprop_eq (BtorMemMgr *mm,
                      BtorBvDomain *d_x,
                      BtorBvDomain *d_y,
@@ -81,8 +85,10 @@ bool btor_bvprop_and (BtorMemMgr *mm,
                       BtorBvDomain **res_d_y,
                       BtorBvDomain **res_d_z);
 
-/* Propagate domains 'd_x' and 'd_z' of z = x << y where y is not const.
- * Note: bw(y) = log_2 bw(y). */
+/**
+ * Propagate domains 'd_x' and 'd_z' of z = x << y where y is not const.
+ * Note: bw(y) = log_2 bw(y).
+ */
 bool btor_bvprop_sll (BtorMemMgr *mm,
                       BtorBvDomain *d_x,
                       BtorBvDomain *d_y,
@@ -91,8 +97,10 @@ bool btor_bvprop_sll (BtorMemMgr *mm,
                       BtorBvDomain **res_d_y,
                       BtorBvDomain **res_d_z);
 
-/* Propagate domains 'd_x' and 'd_z' of z = x >> y where y is not const.
- * Note: bw(y) = log_2 bw(y). */
+/**
+ * Propagate domains 'd_x' and 'd_z' of z = x >> y where y is not const.
+ * Note: bw(y) = log_2 bw(y).
+ */
 bool btor_bvprop_srl (BtorMemMgr *mm,
                       BtorBvDomain *d_x,
                       BtorBvDomain *d_y,
@@ -186,8 +194,10 @@ bool btor_bvprop_mul (BtorMemMgr *mm,
                       BtorBvDomain **res_d_y,
                       BtorBvDomain **res_d_z);
 
-/* Propagate domains 'd_x', 'd_y' and 'd_z' of z = x * y where * does not
- * overflow if no_overflows = true. */
+/**
+ * Propagate domains 'd_x', 'd_y' and 'd_z' of z = x * y where * does not
+ * overflow if no_overflows = true.
+ */
 bool btor_bvprop_mul_aux (BtorMemMgr *mm,
                           BtorBvDomain *d_x,
                           BtorBvDomain *d_y,
@@ -206,17 +216,24 @@ bool btor_bvprop_ult (BtorMemMgr *mm,
                       BtorBvDomain **res_d_y,
                       BtorBvDomain **res_d_z);
 
-/* Propagate domains 'd_x', 'd_y' and 'd_z' of z = x / y. */
+/* Propagate domains 'd_x', 'd_y' and 'd_z' of z = x / y (unsigned division). */
 bool btor_bvprop_udiv (BtorMemMgr *mm,
                        BtorBvDomain *d_x,
                        BtorBvDomain *d_y,
-                     BtorBvDomain *d_z,
-                     BtorBvDomain **res_d_x,
+                       BtorBvDomain *d_z,
+                       BtorBvDomain **res_d_x,
                        BtorBvDomain **res_d_y,
                        BtorBvDomain **res_d_z);
 
-// TODO:
-// propagators:
-//
-// z = x urem y
+/**
+ * Propagate domains 'd_x', 'd_y' and 'd_z' of z = x % y (unsigned remainder).
+ */
+bool btor_bvprop_urem (BtorMemMgr *mm,
+                       BtorBvDomain *d_x,
+                       BtorBvDomain *d_y,
+                       BtorBvDomain *d_z,
+                       BtorBvDomain **res_d_x,
+                       BtorBvDomain **res_d_y,
+                       BtorBvDomain **res_d_z);
+
 #endif
