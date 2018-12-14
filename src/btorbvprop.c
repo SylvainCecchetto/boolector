@@ -19,14 +19,13 @@
 #include <stdio.h>
 #include "utils/btorutil.h"
 
-#if 1
-static void
-print_domain (BtorMemMgr *g_mm, BtorBvDomain *d, bool print_short)
+void
+btor_print_domain (BtorMemMgr *mm, BtorBvDomain *d, bool print_short)
 {
   if (print_short)
   {
-    char *lo   = btor_bv_to_char (g_mm, d->lo);
-    char *hi   = btor_bv_to_char (g_mm, d->hi);
+    char *lo   = btor_bv_to_char (mm, d->lo);
+    char *hi   = btor_bv_to_char (mm, d->hi);
     size_t len = strlen (lo);
     for (size_t i = 0; i < len; i++)
     {
@@ -44,20 +43,19 @@ print_domain (BtorMemMgr *g_mm, BtorBvDomain *d, bool print_short)
       }
     }
     printf ("%s\n", lo);
-    btor_mem_freestr (g_mm, hi);
-    btor_mem_freestr (g_mm, lo);
+    btor_mem_freestr (mm, hi);
+    btor_mem_freestr (mm, lo);
   }
   else
   {
-    char *s = btor_bv_to_char (g_mm, d->lo);
+    char *s = btor_bv_to_char (mm, d->lo);
     printf ("lo: %s, ", s);
-    btor_mem_freestr (g_mm, s);
-    s = btor_bv_to_char (g_mm, d->hi);
+    btor_mem_freestr (mm, s);
+    s = btor_bv_to_char (mm, d->hi);
     printf ("hi: %s\n", s);
-    btor_mem_freestr (g_mm, s);
+    btor_mem_freestr (mm, s);
   }
 }
-#endif
 
 BTOR_DECLARE_STACK (BtorBvDomainPtr, BtorBvDomain *);
 
@@ -115,6 +113,12 @@ btor_bvprop_free (BtorMemMgr *mm, BtorBvDomain *d)
   BTOR_DELETE (mm, d);
 }
 
+BtorBvDomain *
+btor_bvprop_copy (BtorMemMgr *mm, const BtorBvDomain *d)
+{
+  return btor_bvprop_new (mm, d->lo, d->hi);
+}
+
 bool
 btor_bvprop_is_valid (BtorMemMgr *mm, const BtorBvDomain *d)
 {
@@ -132,6 +136,17 @@ btor_bvprop_is_fixed (BtorMemMgr *mm, const BtorBvDomain *d)
   BtorBitVector *equal = btor_bv_eq (mm, d->lo, d->hi);
   bool res             = btor_bv_is_true (equal);
   btor_bv_free (mm, equal);
+  return res;
+}
+
+bool
+btor_bvprop_has_fixed_bits (BtorMemMgr *mm, const BtorBvDomain *d)
+{
+  BtorBitVector *xnor  = btor_bv_xnor (mm, d->lo, d->hi);
+  BtorBitVector *redor = btor_bv_redor (mm, xnor);
+  bool res             = btor_bv_is_true (redor);
+  btor_bv_free (mm, xnor);
+  btor_bv_free (mm, redor);
   return res;
 }
 
@@ -492,7 +507,7 @@ bvprop_shift_aux (BtorMemMgr *mm,
   assert (d_x);
   assert (btor_bvprop_is_valid (mm, d_x));
   assert (d_y);
-  assert (btor_util_is_power_of_2 (d_y->lo->width));
+  assert (btor_util_is_power_of_2 (d_x->lo->width));
   assert (btor_util_log_2 (d_x->lo->width) == d_y->lo->width);
   assert (btor_bvprop_is_valid (mm, d_y));
   assert (d_z);

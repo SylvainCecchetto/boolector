@@ -34,11 +34,21 @@ BtorBvDomain *btor_bvprop_new (BtorMemMgr *mm,
 /* Delete bit-vector domain. */
 void btor_bvprop_free (BtorMemMgr *mm, BtorBvDomain *d);
 
+/* Copy bit-vector domain 'd'. */
+BtorBvDomain *btor_bvprop_copy (BtorMemMgr *mm, const BtorBvDomain *d);
+
 /* Check whether bit-vector domain is valid, i.e., ~lo | hi == ones. */
 bool btor_bvprop_is_valid (BtorMemMgr *mm, const BtorBvDomain *d);
 
 /* Check whether bit-vector domain is fixed, i.e., lo == hi */
 bool btor_bvprop_is_fixed (BtorMemMgr *mm, const BtorBvDomain *d);
+
+/* Check whether bit-vector domain has some fixed bits. */
+bool btor_bvprop_has_fixed_bits (BtorMemMgr *mm, const BtorBvDomain *d);
+
+/* Prints domain 'd' to stdout. 'print_short' indicates whether 'lo' and 'hi'
+ * should be printed separately. */
+void btor_print_domain (BtorMemMgr *mm, BtorBvDomain *d, bool print_short);
 
 /**
  * Propagate domains 'd_x', 'd_y', and 'd_z' of z = (x = y).
@@ -168,8 +178,8 @@ bool btor_bvprop_add (BtorMemMgr *mm,
                       BtorBvDomain *d_x,
                       BtorBvDomain *d_y,
                       BtorBvDomain *d_z,
-                      BtorBvDomain **res_d_y,
                       BtorBvDomain **res_d_x,
+                      BtorBvDomain **res_d_y,
                       BtorBvDomain **res_d_z);
 
 /**

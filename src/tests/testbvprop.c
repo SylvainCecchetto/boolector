@@ -10,8 +10,10 @@
 #include "testbvprop.h"
 
 #include "boolector.h"
+#include "btoraigvec.h"
 #include "btorbv.h"
 #include "btorbvprop.h"
+#include "btorcore.h"
 #include "testrunner.h"
 #include "utils/btormem.h"
 #include "utils/btorutil.h"
@@ -25,6 +27,8 @@
 /*------------------------------------------------------------------------*/
 
 static BtorMemMgr *g_mm;
+static Btor *g_btor;
+static BtorAIGVecMgr *g_avmgr;
 
 /*------------------------------------------------------------------------*/
 
@@ -108,6 +112,8 @@ void
 init_bvprop_tests (void)
 {
   g_mm = btor_mem_mgr_new ();
+  g_btor  = btor_new ();
+  g_avmgr = btor_aigvec_mgr_new (g_btor);
 }
 
 char *
@@ -162,21 +168,7 @@ to_str (BtorBvDomain *d, char **res_lo, char **res_hi, bool print_short)
 static void
 print_domain (BtorBvDomain *d, bool print_short)
 {
-  char *lo, *hi;
-
-  to_str (d, &lo, &hi, print_short);
-
-  if (print_short)
-  {
-    printf ("%s\n", lo);
-  }
-  else
-  {
-    printf ("lo: %s\n", lo);
-    printf ("hi: %s\n", hi);
-    btor_mem_freestr (g_mm, hi);
-  }
-  btor_mem_freestr (g_mm, lo);
+  btor_print_domain (g_mm, d, print_short);
 }
 
 /* Create 2-valued bit-vector from 3-valued bit-vector 'bv' by initializing
@@ -497,6 +489,217 @@ check_ite (BtorBvDomain *d_x,
   btor_mem_freestr (g_mm, str_c);
 }
 
+static BtorAIGVec *
+aigvec_from_domain (BtorBvDomain *d)
+{
+  char *str_d = from_domain (g_mm, d);
+  size_t len  = strlen (str_d);
+
+  BtorAIGVec *res = btor_aigvec_var (g_avmgr, len);
+
+  for (size_t i = 0; i < len; i++)
+  {
+    if (str_d[i] == '0')
+    {
+      btor_aig_release (g_avmgr->amgr, res->aigs[i]);
+      res->aigs[i] = BTOR_AIG_FALSE;
+    }
+    else if (str_d[i] == '1')
+    {
+      btor_aig_release (g_avmgr->amgr, res->aigs[i]);
+      res->aigs[i] = BTOR_AIG_TRUE;
+    }
+  }
+  btor_mem_freestr (g_mm, str_d);
+  return res;
+}
+
+static void
+print_aigvec (BtorAIGVec *av)
+{
+  for (size_t i = 0; i < av->width; i++)
+  {
+    if (av->aigs[i] == BTOR_AIG_FALSE)
+    {
+      printf ("0");
+    }
+    else if (av->aigs[i] == BTOR_AIG_TRUE)
+    {
+      printf ("1");
+    }
+    else
+    {
+      printf ("x");
+    }
+  }
+}
+
+static bool
+check_synth (BtorBvDomain *d_x,
+             BtorBvDomain *d_y,
+             BtorBvDomain *d_z,
+             BtorBvDomain *d_c,
+             BtorBvDomain *res_z,
+             BtorNodeKind kind,
+             uint32_t upper,
+             uint32_t lower)
+{
+  BtorAIGVec *av_x = 0, *av_y = 0, *av_c = 0, *av_res = 0;
+
+  if (btor_bvprop_has_fixed_bits (g_mm, d_z))
+  {
+    return true;
+  }
+
+  char *str_res_z = from_domain (g_mm, res_z);
+  if (d_x)
+  {
+    av_x = aigvec_from_domain (d_x);
+  }
+  if (d_y)
+  {
+    av_y = aigvec_from_domain (d_y);
+  }
+  if (d_c)
+  {
+    av_c = aigvec_from_domain (d_c);
+  }
+
+  switch (kind)
+  {
+    case BTOR_BV_SLICE_NODE:
+      av_res = btor_aigvec_slice (g_avmgr, av_x, upper, lower);
+      break;
+
+    case BTOR_BV_AND_NODE:
+      av_res = btor_aigvec_and (g_avmgr, av_x, av_y);
+      break;
+
+    case BTOR_BV_EQ_NODE: av_res = btor_aigvec_eq (g_avmgr, av_x, av_y); break;
+
+    case BTOR_BV_ADD_NODE:
+      av_res = btor_aigvec_add (g_avmgr, av_x, av_y);
+      break;
+
+    case BTOR_BV_MUL_NODE:
+      av_res = btor_aigvec_mul (g_avmgr, av_x, av_y);
+      break;
+
+    case BTOR_BV_ULT_NODE:
+      av_res = btor_aigvec_ult (g_avmgr, av_x, av_y);
+      break;
+
+    case BTOR_BV_SLL_NODE:
+      av_res = btor_aigvec_sll (g_avmgr, av_x, av_y);
+      break;
+
+    case BTOR_BV_SRL_NODE:
+      av_res = btor_aigvec_srl (g_avmgr, av_x, av_y);
+      break;
+
+    case BTOR_BV_UDIV_NODE:
+      av_res = btor_aigvec_udiv (g_avmgr, av_x, av_y);
+      break;
+
+    case BTOR_BV_UREM_NODE:
+      av_res = btor_aigvec_urem (g_avmgr, av_x, av_y);
+      break;
+
+    case BTOR_BV_CONCAT_NODE:
+      av_res = btor_aigvec_concat (g_avmgr, av_x, av_y);
+      break;
+
+    default:
+      assert (kind == BTOR_COND_NODE);
+      av_res = btor_aigvec_cond (g_avmgr, av_c, av_x, av_y);
+  }
+
+  if (av_x)
+  {
+    btor_aigvec_release_delete (g_avmgr, av_x);
+  }
+  if (av_y)
+  {
+    btor_aigvec_release_delete (g_avmgr, av_y);
+  }
+  if (av_c)
+  {
+    btor_aigvec_release_delete (g_avmgr, av_c);
+  }
+
+  bool result = true;
+  for (size_t i = 0; i < av_res->width; i++)
+  {
+    if (btor_aig_is_const (av_res->aigs[i]) && str_res_z[i] == 'x')
+    {
+      result = false;
+      break;
+    }
+  }
+
+  if (!result)
+  {
+    printf ("\n");
+    if (d_x)
+    {
+      printf ("x: ");
+      print_domain (d_x, true);
+    }
+    if (d_y)
+    {
+      printf ("y: ");
+      print_domain (d_y, true);
+    }
+    if (d_z)
+    {
+      printf ("z: ");
+      print_domain (d_z, true);
+    }
+    if (d_c)
+    {
+      printf ("c: ");
+      print_domain (d_c, true);
+    }
+    printf ("prop result: ");
+    print_domain (res_z, true);
+    printf ("AIG result : ");
+    print_aigvec (av_res);
+    printf ("\n");
+  }
+
+  btor_aigvec_release_delete (g_avmgr, av_res);
+  btor_mem_freestr (g_mm, str_res_z);
+
+  return result;
+}
+
+static void
+check_sat_fix_bits (Btor *btor, BoolectorNode *var, const char bits[])
+{
+  uint32_t idx;
+  uint32_t w = boolector_get_width (btor, var);
+  BoolectorNode *eq, *slice, *one, *zero;
+
+  assert (w == strlen (bits));
+
+  one  = boolector_const (btor, "1");
+  zero = boolector_const (btor, "0");
+  for (size_t i = 0; i < w; i++)
+  {
+    idx = w - i - 1;
+    if (bits[i] != 'x')
+    {
+      slice = boolector_slice (btor, var, idx, idx);
+      eq    = boolector_eq (btor, slice, bits[i] == '1' ? one : zero);
+      boolector_assert (btor, eq);
+      boolector_release (btor, eq);
+      boolector_release (btor, slice);
+    }
+  }
+  boolector_release (btor, one);
+  boolector_release (btor, zero);
+}
+
 static void
 check_sat (BtorBvDomain *d_x,
            BtorBvDomain *d_y,
@@ -525,26 +728,27 @@ check_sat (BtorBvDomain *d_x,
   assert (!binofun || binfun);
 
   int32_t sat_res;
-  uint32_t i, bwx, bwy, bwz, idx;
+  uint32_t bwx, bwy, bwz;
   char *str_x, *str_y, *str_z, *str_c;
+  char *str_res_x, *str_res_y, *str_res_z, *str_res_c;
   Btor *btor;
-  BoolectorNode *x, *y, *z, *c, *fun, *ofun, *not, *eq, *slice, *one, *zero;
+  BoolectorNode *x, *y, *z, *c, *fun, *ofun, *not, *eq;
   BoolectorSort swx, swy, swz, s1;
 
   str_x = from_domain (g_mm, d_x);
   str_y = 0;
   str_z = from_domain (g_mm, d_z);
   str_c = 0;
+  str_res_x = str_res_y = str_res_c = str_res_z = 0;
 
   btor = boolector_new ();
   boolector_set_opt (btor, BTOR_OPT_MODEL_GEN, 1);
+  boolector_set_opt (btor, BTOR_OPT_INCREMENTAL, 1);
   bwx  = d_x->lo->width;
   swx  = boolector_bitvec_sort (btor, bwx);
   bwz  = d_z->lo->width;
   swz  = boolector_bitvec_sort (btor, bwz);
   s1   = boolector_bitvec_sort (btor, 1);
-  one  = boolector_one (btor, s1);
-  zero = boolector_zero (btor, s1);
   x    = boolector_var (btor, swx, "x");
   z    = boolector_var (btor, swz, "z");
   y    = 0;
@@ -598,57 +802,22 @@ check_sat (BtorBvDomain *d_x,
   boolector_release (btor, fun);
   boolector_release (btor, eq);
 
-  for (i = 0; i < bwx; i++)
-  {
-    idx = bwx - i - 1;
-    if (str_x[i] != 'x')
-    {
-      slice = boolector_slice (btor, x, idx, idx);
-      eq    = boolector_eq (btor, slice, str_x[i] == '1' ? one : zero);
-      boolector_assert (btor, eq);
-      boolector_release (btor, eq);
-      boolector_release (btor, slice);
-    }
-  }
+  boolector_push (btor, 1);
+  check_sat_fix_bits (btor, x, str_x);
   if (str_y)
   {
-    for (i = 0; i < bwy; i++)
-    {
-      idx = bwy - i - 1;
-      if (str_y[i] != 'x')
-      {
-        slice = boolector_slice (btor, y, idx, idx);
-        eq    = boolector_eq (btor, slice, str_y[i] == '1' ? one : zero);
-        boolector_assert (btor, eq);
-        boolector_release (btor, eq);
-        boolector_release (btor, slice);
-      }
-    }
+    check_sat_fix_bits (btor, y, str_y);
   }
-  for (i = 0; i < bwz; i++)
-  {
-    idx = bwz - i - 1;
-    if (str_z[i] != 'x')
-    {
-      slice = boolector_slice (btor, z, idx, idx);
-      eq    = boolector_eq (btor, slice, str_z[i] == '1' ? one : zero);
-      boolector_assert (btor, eq);
-      boolector_release (btor, eq);
-      boolector_release (btor, slice);
-    }
-  }
+  check_sat_fix_bits (btor, z, str_z);
   if (str_c)
   {
-    if (str_c[0] != 'x')
-    {
-      eq = boolector_eq (btor, c, str_c[0] == '1' ? one : zero);
-      boolector_assert (btor, eq);
-      boolector_release (btor, eq);
-    }
+    check_sat_fix_bits (btor, c, str_c);
   }
 
   // boolector_dump_smt2 (btor, stdout);
   sat_res = boolector_sat (btor);
+  boolector_pop (btor, 1);
+
   assert (sat_res != BTOR_RESULT_SAT
           || (valid && is_valid (g_mm, res_x, res_y, res_z, res_c)));
   assert (sat_res != BTOR_RESULT_UNSAT
@@ -656,6 +825,77 @@ check_sat (BtorBvDomain *d_x,
                || (!valid && !is_valid (g_mm, res_x, res_y, res_z, res_c)))
               && (!decompositional || !valid
                   || !is_fixed (g_mm, res_x, res_y, res_z, res_c))));
+
+  /* Check correctness of results res_* for valid domains. */
+  if (valid)
+  {
+    str_res_x = from_domain (g_mm, res_x);
+    str_res_z = from_domain (g_mm, res_z);
+    if (res_y)
+    {
+      str_res_y = from_domain (g_mm, res_y);
+    }
+    if (res_c)
+    {
+      str_res_c = from_domain (g_mm, res_c);
+    }
+    boolector_push (btor, 1);
+    check_sat_fix_bits (btor, x, str_res_x);
+    if (str_y)
+    {
+      check_sat_fix_bits (btor, y, str_res_y);
+    }
+    check_sat_fix_bits (btor, z, str_res_z);
+    if (str_c)
+    {
+      check_sat_fix_bits (btor, c, str_res_c);
+    }
+    sat_res = boolector_sat (btor);
+    if (sat_res != BTOR_RESULT_SAT)
+    {
+      printf ("\n");
+      printf ("x: ");
+      print_domain (d_x, true);
+      if (d_y)
+      {
+        printf ("y: ");
+        print_domain (d_y, true);
+      }
+      if (d_c)
+      {
+        printf ("c: ");
+        print_domain (d_c, true);
+      }
+      printf ("z: ");
+      print_domain (d_z, true);
+      printf ("x': ");
+      print_domain (res_x, true);
+      if (res_y)
+      {
+        printf ("y': ");
+        print_domain (res_y, true);
+      }
+      if (res_c)
+      {
+        printf ("c': ");
+        print_domain (res_c, true);
+      }
+      printf ("z': ");
+      print_domain (res_z, true);
+    }
+    assert (sat_res == BTOR_RESULT_SAT);
+    boolector_pop (btor, 1);
+    btor_mem_freestr (g_mm, str_res_x);
+    btor_mem_freestr (g_mm, str_res_z);
+    if (str_res_y)
+    {
+      btor_mem_freestr (g_mm, str_res_y);
+    }
+    if (str_res_c)
+    {
+      btor_mem_freestr (g_mm, str_res_c);
+    }
+  }
 
   // printf ("sat_res %d\n", sat_res);
   // if (sat_res == BOOLECTOR_SAT)
@@ -667,8 +907,6 @@ check_sat (BtorBvDomain *d_x,
   if (c) boolector_release (btor, c);
   if (y) boolector_release (btor, y);
   boolector_release (btor, z);
-  boolector_release (btor, one);
-  boolector_release (btor, zero);
   boolector_release_sort (btor, swx);
   if (y) boolector_release_sort (btor, swy);
   boolector_release_sort (btor, swz);
@@ -784,6 +1022,10 @@ eq_bvprop (uint32_t bw)
                    0,
                    true,
                    res);
+        //        assert (
+        //            !res
+        //            || check_synth (d_x, d_y, d_z, 0, res_z, BTOR_BV_EQ_NODE,
+        //            0, 0));
 
         if (res && btor_bvprop_is_fixed (g_mm, d_x)
             && btor_bvprop_is_fixed (g_mm, d_y))
@@ -1782,6 +2024,10 @@ mul_bvprop (uint32_t bw, bool no_overflows)
                    0,
                    true,
                    res);
+        //        assert (
+        //            !res
+        //            || check_synth (d_x, d_y, d_z, 0, res_z, BTOR_BV_MUL_NODE,
+        //            0, 0));
 
         if (btor_bvprop_is_fixed (g_mm, d_x)
             && btor_bvprop_is_fixed (g_mm, d_y))
@@ -2245,4 +2491,6 @@ void
 finish_bvprop_tests (void)
 {
   btor_mem_mgr_delete (g_mm);
+  btor_aigvec_mgr_delete (g_avmgr);
+  btor_delete (g_btor);
 }
