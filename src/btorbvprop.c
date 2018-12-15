@@ -150,6 +150,8 @@ btor_bvprop_has_fixed_bits (BtorMemMgr *mm, const BtorBvDomain *d)
   return res;
 }
 
+/* -------------------------------------------------------------------------- */
+
 static bool
 made_progress (BtorBvDomain *d_x,
                BtorBvDomain *d_y,
@@ -176,6 +178,459 @@ made_progress (BtorBvDomain *d_x,
   if (d_c && btor_bv_compare (d_c->hi, res_d_c->hi)) return true;
   return false;
 }
+
+static bool
+decomp_step (BtorMemMgr *mm,
+             BtorBvDomain **tmp_x,
+             BtorBvDomain **tmp_y,
+             BtorBvDomain **tmp_z,
+             BtorBvDomain **tmp_c,
+             BtorBitVector *n,
+             uint32_t hi,
+             uint32_t lo,
+             bool no_overflows,
+             BtorBvDomain **res_d_x,
+             BtorBvDomain **res_d_y,
+             BtorBvDomain **res_d_z,
+             BtorBvDomain **res_d_c,
+             bool (*fun2) (BtorMemMgr *,
+                           BtorBvDomain *,
+                           BtorBvDomain *,
+                           BtorBvDomain **,
+                           BtorBvDomain **),
+             bool (*fun3) (BtorMemMgr *,
+                           BtorBvDomain *,
+                           BtorBvDomain *,
+                           BtorBvDomain *,
+                           BtorBvDomain **,
+                           BtorBvDomain **,
+                           BtorBvDomain **),
+             bool (*fun3_aux) (BtorMemMgr *,
+                               BtorBvDomain *,
+                               BtorBvDomain *,
+                               BtorBvDomain *,
+                               BtorBvDomain **,
+                               BtorBvDomain **,
+                               BtorBvDomain **,
+                               bool),
+             bool (*fun4) (BtorMemMgr *,
+                           BtorBvDomain *,
+                           BtorBvDomain *,
+                           BtorBvDomain *,
+                           BtorBvDomain *,
+                           BtorBvDomain **,
+                           BtorBvDomain **,
+                           BtorBvDomain **,
+                           BtorBvDomain **),
+             bool (*fun4_aux) (BtorMemMgr *,
+                               BtorBvDomain *,
+                               BtorBvDomain *,
+                               BtorBvDomain *,
+                               BtorBvDomain *,
+                               BtorBvDomain **,
+                               BtorBvDomain **,
+                               BtorBvDomain **,
+                               BtorBvDomain **,
+                               bool),
+             bool (*funshiftc) (BtorMemMgr *,
+                                BtorBvDomain *,
+                                BtorBvDomain *,
+                                BtorBitVector *,
+                                BtorBvDomain **,
+                                BtorBvDomain **),
+             bool (*funslice) (BtorMemMgr *,
+                               BtorBvDomain *,
+                               BtorBvDomain *,
+                               uint32_t,
+                               uint32_t,
+                               BtorBvDomain **,
+                               BtorBvDomain **),
+             bool *progress)
+{
+  assert (tmp_x);
+  assert (tmp_z);
+  assert (res_d_x);
+  assert (res_d_z);
+  assert (!tmp_y || res_d_y);
+  assert (!tmp_c || res_d_c);
+  assert ((fun2 && !fun3 && !fun3_aux && !fun4 && !fun4_aux && !funshiftc
+           && !funslice)
+          || (!fun2 && fun3 && !fun3_aux && !fun4 && !fun4_aux && !funshiftc
+              && !funslice)
+          || (!fun2 && !fun3 && fun3_aux && !fun4 && !fun4_aux && !funshiftc
+              && !funslice)
+          || (!fun2 && !fun3 && !fun3_aux && fun4 && !fun4_aux && !funshiftc
+              && !funslice)
+          || (!fun2 && !fun3 && !fun3_aux && !fun4 && fun4_aux && !funshiftc
+              && !funslice)
+          || (!fun2 && !fun3 && !fun3_aux && !fun4 && !fun4_aux && funshiftc
+              && !funslice)
+          || (!fun2 && !fun3 && !fun3_aux && !fun4 && !fun4_aux && !funshiftc
+              && funslice));
+  assert (!fun4 || tmp_c);
+  assert (!funshiftc || (n && !tmp_y && !res_d_y && !tmp_c && !res_d_c));
+  assert (progress);
+
+  if ((fun2 && !fun2 (mm, *tmp_x, *tmp_z, res_d_x, res_d_z))
+      || (fun3 && !fun3 (mm, *tmp_x, *tmp_y, *tmp_z, res_d_x, res_d_y, res_d_z))
+      || (fun3_aux
+          && !fun3_aux (mm,
+                        *tmp_x,
+                        *tmp_y,
+                        *tmp_z,
+                        res_d_x,
+                        res_d_y,
+                        res_d_z,
+                        no_overflows))
+      || (fun4
+          && !fun4 (mm,
+                    *tmp_x,
+                    *tmp_y,
+                    *tmp_z,
+                    *tmp_c,
+                    res_d_x,
+                    res_d_y,
+                    res_d_z,
+                    res_d_c))
+      || (fun4_aux
+          && !fun4_aux (mm,
+                        *tmp_x,
+                        *tmp_y,
+                        *tmp_z,
+                        tmp_c ? *tmp_c : 0,
+                        res_d_x,
+                        res_d_y,
+                        res_d_z,
+                        res_d_c,
+                        no_overflows))
+      || (funshiftc && !funshiftc (mm, *tmp_x, *tmp_z, n, res_d_x, res_d_z))
+      || (funslice && !funslice (mm, *tmp_x, *tmp_z, hi, lo, res_d_x, res_d_z)))
+  {
+    btor_bvprop_free (mm, *res_d_x);
+    if (res_d_y) btor_bvprop_free (mm, *res_d_y);
+    btor_bvprop_free (mm, *res_d_z);
+    if (res_d_c) btor_bvprop_free (mm, *res_d_c);
+    return false;
+  }
+  assert (btor_bvprop_is_valid (mm, *res_d_x));
+  assert (!res_d_y || btor_bvprop_is_valid (mm, *res_d_y));
+  assert (btor_bvprop_is_valid (mm, *res_d_z));
+  assert (!res_d_c || btor_bvprop_is_valid (mm, *res_d_c));
+  if (!(*progress))
+  {
+    *progress = made_progress (*tmp_x,
+                               tmp_y ? *tmp_y : 0,
+                               *tmp_z,
+                               tmp_c ? *tmp_c : 0,
+                               *res_d_x,
+                               res_d_y ? *res_d_y : 0,
+                               *res_d_z,
+                               res_d_c ? *res_d_c : 0);
+  }
+  btor_bvprop_free (mm, *tmp_x);
+  *tmp_x = *res_d_x;
+  if (tmp_y)
+  {
+    btor_bvprop_free (mm, *tmp_y);
+    *tmp_y = *res_d_y;
+  }
+  btor_bvprop_free (mm, *tmp_z);
+  *tmp_z = *res_d_z;
+  if (tmp_c)
+  {
+    btor_bvprop_free (mm, *tmp_c);
+    *tmp_c = *res_d_c;
+  }
+  return true;
+}
+
+static bool
+decomp_step_unary (BtorMemMgr *mm,
+                   BtorBvDomain **tmp_x,
+                   BtorBvDomain **tmp_z,
+                   BtorBvDomain **res_d_x,
+                   BtorBvDomain **res_d_z,
+                   bool (*fun2) (BtorMemMgr *,
+                                 BtorBvDomain *,
+                                 BtorBvDomain *,
+                                 BtorBvDomain **,
+                                 BtorBvDomain **),
+                   bool *progress)
+{
+  return decomp_step (mm,
+                      tmp_x,
+                      0,
+                      tmp_z,
+                      0,
+                      0,
+                      0,
+                      0,
+                      false,
+                      res_d_x,
+                      0,
+                      res_d_z,
+                      0,
+                      fun2,
+                      0,
+                      0,
+                      0,
+                      0,
+                      0,
+                      0,
+                      progress);
+}
+
+static bool
+decomp_step_binary (BtorMemMgr *mm,
+                    BtorBvDomain **tmp_x,
+                    BtorBvDomain **tmp_y,
+                    BtorBvDomain **tmp_z,
+                    BtorBvDomain **res_d_x,
+                    BtorBvDomain **res_d_y,
+                    BtorBvDomain **res_d_z,
+                    bool (*fun3) (BtorMemMgr *,
+                                  BtorBvDomain *,
+                                  BtorBvDomain *,
+                                  BtorBvDomain *,
+                                  BtorBvDomain **,
+                                  BtorBvDomain **,
+                                  BtorBvDomain **),
+                    bool *progress)
+{
+  return decomp_step (mm,
+                      tmp_x,
+                      tmp_y,
+                      tmp_z,
+                      0,
+                      0,
+                      0,
+                      0,
+                      false,
+                      res_d_x,
+                      res_d_y,
+                      res_d_z,
+                      0,
+                      0,
+                      fun3,
+                      0,
+                      0,
+                      0,
+                      0,
+                      0,
+                      progress);
+}
+
+static bool
+decomp_step_binary_aux (BtorMemMgr *mm,
+                        BtorBvDomain **tmp_x,
+                        BtorBvDomain **tmp_y,
+                        BtorBvDomain **tmp_z,
+                        BtorBvDomain **res_d_x,
+                        BtorBvDomain **res_d_y,
+                        BtorBvDomain **res_d_z,
+                        bool no_overflows,
+                        bool (*fun3_aux) (BtorMemMgr *,
+                                          BtorBvDomain *,
+                                          BtorBvDomain *,
+                                          BtorBvDomain *,
+                                          BtorBvDomain **,
+                                          BtorBvDomain **,
+                                          BtorBvDomain **,
+                                          bool),
+                        bool *progress)
+{
+  return decomp_step (mm,
+                      tmp_x,
+                      tmp_y,
+                      tmp_z,
+                      0,
+                      0,
+                      0,
+                      0,
+                      no_overflows,
+                      res_d_x,
+                      res_d_y,
+                      res_d_z,
+                      0,
+                      0,
+                      0,
+                      fun3_aux,
+                      0,
+                      0,
+                      0,
+                      0,
+                      progress);
+}
+
+static bool
+decomp_step_ternary (BtorMemMgr *mm,
+                     BtorBvDomain **tmp_x,
+                     BtorBvDomain **tmp_y,
+                     BtorBvDomain **tmp_z,
+                     BtorBvDomain **tmp_c,
+                     BtorBvDomain **res_d_x,
+                     BtorBvDomain **res_d_y,
+                     BtorBvDomain **res_d_z,
+                     BtorBvDomain **res_d_c,
+                     bool (*fun4) (BtorMemMgr *,
+                                   BtorBvDomain *,
+                                   BtorBvDomain *,
+                                   BtorBvDomain *,
+                                   BtorBvDomain *,
+                                   BtorBvDomain **,
+                                   BtorBvDomain **,
+                                   BtorBvDomain **,
+                                   BtorBvDomain **),
+                     bool *progress)
+{
+  return decomp_step (mm,
+                      tmp_x,
+                      tmp_y,
+                      tmp_z,
+                      tmp_c,
+                      0,
+                      0,
+                      0,
+                      false,
+                      res_d_x,
+                      res_d_y,
+                      res_d_z,
+                      res_d_c,
+                      0,
+                      0,
+                      0,
+                      fun4,
+                      0,
+                      0,
+                      0,
+                      progress);
+}
+
+static bool
+decomp_step_ternary_aux (BtorMemMgr *mm,
+                         BtorBvDomain **tmp_x,
+                         BtorBvDomain **tmp_y,
+                         BtorBvDomain **tmp_z,
+                         BtorBvDomain **tmp_c,
+                         BtorBvDomain **res_d_x,
+                         BtorBvDomain **res_d_y,
+                         BtorBvDomain **res_d_z,
+                         BtorBvDomain **res_d_c,
+                         bool no_overflows,
+                         bool (*fun4_aux) (BtorMemMgr *,
+                                           BtorBvDomain *,
+                                           BtorBvDomain *,
+                                           BtorBvDomain *,
+                                           BtorBvDomain *,
+                                           BtorBvDomain **,
+                                           BtorBvDomain **,
+                                           BtorBvDomain **,
+                                           BtorBvDomain **,
+                                           bool),
+                         bool *progress)
+{
+  return decomp_step (mm,
+                      tmp_x,
+                      tmp_y,
+                      tmp_z,
+                      tmp_c,
+                      0,
+                      0,
+                      0,
+                      no_overflows,
+                      res_d_x,
+                      res_d_y,
+                      res_d_z,
+                      res_d_c,
+                      0,
+                      0,
+                      0,
+                      0,
+                      fun4_aux,
+                      0,
+                      0,
+                      progress);
+}
+
+static bool
+decomp_step_shiftc (BtorMemMgr *mm,
+                    BtorBvDomain **tmp_x,
+                    BtorBvDomain **tmp_z,
+                    BtorBitVector *n,
+                    BtorBvDomain **res_d_x,
+                    BtorBvDomain **res_d_z,
+                    bool (*funshiftc) (BtorMemMgr *,
+                                       BtorBvDomain *,
+                                       BtorBvDomain *,
+                                       BtorBitVector *,
+                                       BtorBvDomain **,
+                                       BtorBvDomain **),
+                    bool *progress)
+{
+  return decomp_step (mm,
+                      tmp_x,
+                      0,
+                      tmp_z,
+                      0,
+                      n,
+                      0,
+                      0,
+                      false,
+                      res_d_x,
+                      0,
+                      res_d_z,
+                      0,
+                      0,
+                      0,
+                      0,
+                      0,
+                      0,
+                      funshiftc,
+                      0,
+                      progress);
+}
+
+static bool
+decomp_step_slice (BtorMemMgr *mm,
+                   BtorBvDomain **tmp_x,
+                   BtorBvDomain **tmp_z,
+                   uint32_t hi,
+                   uint32_t lo,
+                   BtorBvDomain **res_d_x,
+                   BtorBvDomain **res_d_z,
+                   bool (*funslice) (BtorMemMgr *,
+                                     BtorBvDomain *,
+                                     BtorBvDomain *,
+                                     uint32_t,
+                                     uint32_t,
+                                     BtorBvDomain **,
+                                     BtorBvDomain **),
+                   bool *progress)
+{
+  return decomp_step (mm,
+                      tmp_x,
+                      0,
+                      tmp_z,
+                      0,
+                      0,
+                      hi,
+                      lo,
+                      false,
+                      res_d_x,
+                      0,
+                      res_d_z,
+                      0,
+                      0,
+                      0,
+                      0,
+                      0,
+                      0,
+                      0,
+                      funslice,
+                      progress);
+}
+
+/* -------------------------------------------------------------------------- */
 
 bool
 btor_bvprop_eq (BtorMemMgr *mm,
@@ -616,6 +1071,20 @@ bvprop_shift_aux (BtorMemMgr *mm,
        * SLL: prev_z << shift
        * SRL: prev_z >> shift
        */
+#if 1
+      if (!(res = decomp_step_shiftc (
+                mm,
+                tmp_z_prev,
+                tmp_shift,
+                bv,
+                res_d_x,
+                res_d_z,
+                is_srl ? btor_bvprop_srl_const : btor_bvprop_sll_const,
+                &progress)))
+      {
+        goto DONE;
+      }
+#else
       if (is_srl)
       {
         if (!btor_bvprop_srl_const (
@@ -649,6 +1118,7 @@ bvprop_shift_aux (BtorMemMgr *mm,
       btor_bvprop_free (mm, *tmp_shift);
       *tmp_z_prev = *res_d_x;
       *tmp_shift  = *res_d_z;
+#endif
 
       /**
        * SLL: ite (y[i:i], z << (1 << i), x)
@@ -656,15 +1126,31 @@ bvprop_shift_aux (BtorMemMgr *mm,
        */
       tmp_c   = &d_c_stack.start[i];
       tmp_ite = &d_ite_stack.start[i];
+#if 1
+      if (!(res = decomp_step_ternary (mm,
+                                       tmp_shift,
+                                       tmp_z_prev,
+                                       tmp_ite,
+                                       tmp_c,
+                                       res_d_x,
+                                       res_d_y,
+                                       res_d_z,
+                                       &tmp_res_c,
+                                       btor_bvprop_ite,
+                                       &progress)))
+      {
+        goto DONE;
+      }
+#else
       if (!btor_bvprop_ite (mm,
-                            *tmp_c,
                             *tmp_shift,
                             *tmp_z_prev,
                             *tmp_ite,
-                            &tmp_res_c,
+                            *tmp_c,
                             res_d_x,
                             res_d_y,
-                            res_d_z))
+                            res_d_z,
+                            &tmp_res_c))
       {
         res = false;
         btor_bvprop_free (mm, tmp_res_c);
@@ -696,6 +1182,7 @@ bvprop_shift_aux (BtorMemMgr *mm,
       *tmp_z_prev = *res_d_y;
       *tmp_ite    = *res_d_z;
       *tmp_c      = tmp_res_c;
+#endif
     }
   } while (progress);
 
@@ -1494,14 +1981,14 @@ SEXT_SIGN_1:
 
 bool
 btor_bvprop_ite (BtorMemMgr *mm,
-                 BtorBvDomain *d_c,
                  BtorBvDomain *d_x,
                  BtorBvDomain *d_y,
                  BtorBvDomain *d_z,
-                 BtorBvDomain **res_d_c,
+                 BtorBvDomain *d_c,
                  BtorBvDomain **res_d_x,
                  BtorBvDomain **res_d_y,
-                 BtorBvDomain **res_d_z)
+                 BtorBvDomain **res_d_z,
+                 BtorBvDomain **res_d_c)
 {
   assert (mm);
   assert (d_c);
@@ -1705,6 +2192,18 @@ btor_bvprop_ite (BtorMemMgr *mm,
 
     if (bw > 1 && !c_is_fixed && progress)
     {
+#if 1
+      if (!(res = decomp_step_unary (mm,
+                                     &tmp_c,
+                                     &tmp_bvc,
+                                     res_d_c,
+                                     &res_tmp_bvc,
+                                     btor_bvprop_sext,
+                                     &progress)))
+      {
+        goto DONE;
+      }
+#else
       if (!btor_bvprop_sext (mm, tmp_c, tmp_bvc, res_d_c, &res_tmp_bvc))
       {
         res = false;
@@ -1717,6 +2216,7 @@ btor_bvprop_ite (BtorMemMgr *mm,
       btor_bvprop_free (mm, tmp_bvc);
       tmp_c   = *res_d_c;
       tmp_bvc = res_tmp_bvc;
+#endif
     }
   } while (progress);
 
@@ -1780,7 +2280,10 @@ bvprop_add_aux (BtorMemMgr *mm,
   BtorBvDomain *tmp_x_xor_y, *tmp_x_and_y;
   BtorBvDomain *tmp_cin_and_x_xor_y;
   BtorBvDomain *tmp_cout_msb;
+#ifndef NDEBUG
   BtorBvDomain *d_one;
+#endif
+  BtorBvDomain *tmp_one;
 
   res = true;
 
@@ -1815,12 +2318,20 @@ bvprop_add_aux (BtorMemMgr *mm,
   tmp_cin_and_x_xor_y = btor_bvprop_new_init (mm, bw);
 
   tmp_cout_msb = 0;
-  d_one        = 0;
+  tmp_one      = 0;
+#ifndef NDEBUG
+  d_one = 0;
+#endif
+
   if (no_overflows)
   {
     tmp_cout_msb = btor_bvprop_new_init (mm, 1);
+    tmp_one      = btor_bvprop_new_init (mm, 1);
+    btor_bv_set_bit (tmp_one->lo, 0, 1);
+#ifndef NDEBUG
     d_one        = btor_bvprop_new_init (mm, 1);
     btor_bv_set_bit (d_one->lo, 0, 1);
+#endif
   }
 
   do
@@ -1828,6 +2339,20 @@ bvprop_add_aux (BtorMemMgr *mm,
     progress = false;
 
     /* x_xor_y = x ^ y */
+#if 1
+    if (!(res = decomp_step_binary (mm,
+                                    &tmp_x,
+                                    &tmp_y,
+                                    &tmp_x_xor_y,
+                                    res_d_x,
+                                    res_d_y,
+                                    res_d_z,
+                                    btor_bvprop_xor,
+                                    &progress)))
+    {
+      goto DONE;
+    }
+#else
     if (!btor_bvprop_xor (
             mm, tmp_x, tmp_y, tmp_x_xor_y, res_d_x, res_d_y, res_d_z))
     {
@@ -1851,8 +2376,23 @@ bvprop_add_aux (BtorMemMgr *mm,
     tmp_x       = *res_d_x;
     tmp_y       = *res_d_y;
     tmp_x_xor_y = *res_d_z;
+#endif
 
     /* z = x_xor_y ^ cin */
+#if 1
+    if (!(res = decomp_step_binary (mm,
+                                    &tmp_x_xor_y,
+                                    &tmp_cin,
+                                    &tmp_z,
+                                    res_d_x,
+                                    res_d_y,
+                                    res_d_z,
+                                    btor_bvprop_xor,
+                                    &progress)))
+    {
+      goto DONE;
+    }
+#else
     if (!btor_bvprop_xor (
             mm, tmp_x_xor_y, tmp_cin, tmp_z, res_d_x, res_d_y, res_d_z))
     {
@@ -1876,8 +2416,23 @@ bvprop_add_aux (BtorMemMgr *mm,
     tmp_x_xor_y = *res_d_x;
     tmp_cin     = *res_d_y;
     tmp_z       = *res_d_z;
+#endif
 
     /* x_and_y = x & y */
+#if 1
+    if (!(res = decomp_step_binary (mm,
+                                    &tmp_x,
+                                    &tmp_y,
+                                    &tmp_x_and_y,
+                                    res_d_x,
+                                    res_d_y,
+                                    res_d_z,
+                                    btor_bvprop_and,
+                                    &progress)))
+    {
+      goto DONE;
+    }
+#else
     if (!btor_bvprop_and (
             mm, tmp_x, tmp_y, tmp_x_and_y, res_d_x, res_d_y, res_d_z))
     {
@@ -1901,8 +2456,23 @@ bvprop_add_aux (BtorMemMgr *mm,
     tmp_x       = *res_d_x;
     tmp_y       = *res_d_y;
     tmp_x_and_y = *res_d_z;
+#endif
 
     /* cin_and_x_xor_y = cin & x_xor_y */
+#if 1
+    if (!(res = decomp_step_binary (mm,
+                                    &tmp_cin,
+                                    &tmp_x_xor_y,
+                                    &tmp_cin_and_x_xor_y,
+                                    res_d_x,
+                                    res_d_y,
+                                    res_d_z,
+                                    btor_bvprop_and,
+                                    &progress)))
+    {
+      goto DONE;
+    }
+#else
     if (!btor_bvprop_and (mm,
                           tmp_cin,
                           tmp_x_xor_y,
@@ -1937,8 +2507,23 @@ bvprop_add_aux (BtorMemMgr *mm,
     tmp_cin             = *res_d_x;
     tmp_x_xor_y         = *res_d_y;
     tmp_cin_and_x_xor_y = *res_d_z;
+#endif
 
     /* cout = x_and_y | cin_and_x_xor_y */
+#if 1
+    if (!(res = decomp_step_binary (mm,
+                                    &tmp_x_and_y,
+                                    &tmp_cin_and_x_xor_y,
+                                    &tmp_cout,
+                                    res_d_x,
+                                    res_d_y,
+                                    res_d_z,
+                                    btor_bvprop_or,
+                                    &progress)))
+    {
+      goto DONE;
+    }
+#else
     if (!btor_bvprop_or (mm,
                          tmp_x_and_y,
                          tmp_cin_and_x_xor_y,
@@ -1973,8 +2558,22 @@ bvprop_add_aux (BtorMemMgr *mm,
     tmp_x_and_y         = *res_d_x;
     tmp_cin_and_x_xor_y = *res_d_y;
     tmp_cout            = *res_d_z;
+#endif
 
     /* cin  = cout << 1 */
+#if 1
+    if (!(res = decomp_step_shiftc (mm,
+                                    &tmp_cout,
+                                    &tmp_cin,
+                                    one,
+                                    res_d_x,
+                                    res_d_z,
+                                    btor_bvprop_sll_const,
+                                    &progress)))
+    {
+      goto DONE;
+    }
+#else
     if (!btor_bvprop_sll_const (mm, tmp_cout, tmp_cin, one, res_d_x, res_d_z))
     {
       res = false;
@@ -1993,11 +2592,12 @@ bvprop_add_aux (BtorMemMgr *mm,
     btor_bvprop_free (mm, tmp_cin);
     tmp_cout = *res_d_x;
     tmp_cin  = *res_d_z;
+#endif
 
     if (no_overflows)
     {
       assert (tmp_cout_msb);
-      assert (d_one);
+      assert (tmp_one);
 
       /**
        * Overflow:
@@ -2010,6 +2610,20 @@ bvprop_add_aux (BtorMemMgr *mm,
        */
 
       /* cout[MSB:MSB] */
+#if 1
+      if (!(res = decomp_step_slice (mm,
+                                     &tmp_cout,
+                                     &tmp_cout_msb,
+                                     bw - 1,
+                                     bw - 1,
+                                     res_d_x,
+                                     res_d_z,
+                                     btor_bvprop_slice,
+                                     &progress)))
+      {
+        goto DONE;
+      }
+#else
       if (!btor_bvprop_slice (
               mm, tmp_cout, tmp_cout_msb, bw - 1, bw - 1, res_d_x, res_d_z))
       {
@@ -2029,8 +2643,25 @@ bvprop_add_aux (BtorMemMgr *mm,
       btor_bvprop_free (mm, tmp_cout_msb);
       tmp_cout     = *res_d_x;
       tmp_cout_msb = *res_d_z;
+#endif
 
       /* 1 xor cout[MSB:MSB] = 1 */
+#if 1
+      if (!(res = decomp_step_binary (mm,
+                                      &tmp_one,
+                                      &tmp_cout_msb,
+                                      &tmp_one,
+                                      res_d_x,
+                                      res_d_y,
+                                      res_d_z,
+                                      btor_bvprop_xor,
+                                      &progress)))
+      {
+        goto DONE;
+      }
+      assert (!btor_bv_compare (d_one->lo, tmp_one->lo));
+      assert (!btor_bv_compare (d_one->hi, tmp_one->hi));
+#else
       if (!btor_bvprop_xor (
               mm, d_one, tmp_cout_msb, d_one, res_d_x, res_d_y, res_d_z))
       {
@@ -2056,6 +2687,7 @@ bvprop_add_aux (BtorMemMgr *mm,
       btor_bvprop_free (mm, *res_d_x);
       btor_bvprop_free (mm, *res_d_z);
       tmp_cout_msb = *res_d_y;
+#endif
     }
   } while (progress);
 
@@ -2078,7 +2710,10 @@ DONE:
   btor_bvprop_free (mm, tmp_x_and_y);
   btor_bvprop_free (mm, tmp_cin_and_x_xor_y);
   if (tmp_cout_msb) btor_bvprop_free (mm, tmp_cout_msb);
+  if (tmp_one) btor_bvprop_free (mm, tmp_one);
+#ifndef NDEBUG
   if (d_one) btor_bvprop_free (mm, d_one);
+#endif
 
   btor_bv_free (mm, one);
 
@@ -2147,8 +2782,12 @@ btor_bvprop_mul_aux (BtorMemMgr *mm,
   uint32_t i, bw, bwo, n;
   bool res, progress;
   BtorBitVector *bv, *lo, *hi;
-  BtorBvDomain *d, *d_one, *d_zero;
-  BtorBvDomain *tmp_x, *tmp_y, *tmp_z, *tmp_zero;
+  BtorBvDomain *d;
+#ifndef NDEBUG
+  BtorBvDomain *d_one, *d_zero, *d_zero_bw;
+#endif
+  BtorBvDomain *tmp_one, *tmp_zero;
+  BtorBvDomain *tmp_x, *tmp_y, *tmp_z, *tmp_zero_bw;
   BtorBvDomain **tmp_c, **tmp_shift, **tmp_ite, **tmp0, **tmp1, **tmp_add;
   BtorBvDomain *tmp_res_c, *tmp_slice;
   BtorBvDomain **tmp;
@@ -2170,8 +2809,12 @@ btor_bvprop_mul_aux (BtorMemMgr *mm,
   assert (bw == d_z->lo->width);
   assert (bw == d_z->hi->width);
 
+#ifndef NDEBUG
   d_one     = 0;
   d_zero    = 0;
+#endif
+  tmp_one   = 0;
+  tmp_zero  = 0;
   tmp_slice = 0;
 
   tmp_y = btor_bvprop_new (mm, d_y->lo, d_y->hi);
@@ -2186,12 +2829,42 @@ btor_bvprop_mul_aux (BtorMemMgr *mm,
 
     tmp_x = btor_bvprop_new (mm, d_x->lo, d_x->hi);
 
-    bv       = btor_bv_zero (mm, bw);
-    tmp_zero = btor_bvprop_new (mm, bv, bv);
-    btor_bv_free (mm, bv);
+    tmp_zero_bw     = new_domain (mm);
+    tmp_zero_bw->lo = btor_bv_zero (mm, bw);
+    tmp_zero_bw->hi = btor_bv_zero (mm, bw);
+#ifndef NDEBUG
+    d_zero_bw     = new_domain (mm);
+    d_zero_bw->lo = btor_bv_zero (mm, bw);
+    d_zero_bw->hi = btor_bv_zero (mm, bw);
+#endif
 
-    if (!btor_bvprop_ite (
-            mm, d_y, d_x, tmp_zero, d_z, &tmp_res_c, res_d_x, res_d_y, res_d_z))
+#if 1
+    if (!(res = decomp_step_ternary (mm,
+                                     &tmp_x,
+                                     &tmp_zero_bw,
+                                     &tmp_z,
+                                     &tmp_y,
+                                     res_d_x,
+                                     res_d_y,
+                                     res_d_z,
+                                     &tmp_res_c,
+                                     btor_bvprop_ite,
+                                     &progress)))
+    {
+      goto DONE;
+    }
+    assert (!btor_bv_compare (d_zero_bw->lo, tmp_zero_bw->lo));
+    assert (!btor_bv_compare (d_zero_bw->hi, tmp_zero_bw->hi));
+#else
+    if (!btor_bvprop_ite (mm,
+                          d_x,
+                          tmp_zero_bw,
+                          d_z,
+                          d_y,
+                          res_d_x,
+                          res_d_y,
+                          res_d_z,
+                          &tmp_res_c))
     {
       res = false;
       btor_bvprop_free (mm, tmp_res_c);
@@ -2207,6 +2880,7 @@ btor_bvprop_mul_aux (BtorMemMgr *mm,
     tmp_y = tmp_res_c;
     tmp_z = *res_d_z;
     btor_bvprop_free (mm, *res_d_y);
+#endif
   }
   else
   {
@@ -2229,6 +2903,15 @@ btor_bvprop_mul_aux (BtorMemMgr *mm,
 
     bwo = no_overflows ? 2 * bw : bw;
 
+#ifndef NDEBUG
+    d_zero_bw     = new_domain (mm);
+    d_zero_bw->lo = btor_bv_zero (mm, bwo);
+    d_zero_bw->hi = btor_bv_zero (mm, bwo);
+#endif
+    tmp_zero_bw     = new_domain (mm);
+    tmp_zero_bw->lo = btor_bv_zero (mm, bwo);
+    tmp_zero_bw->hi = btor_bv_zero (mm, bwo);
+
     if (no_overflows)
     {
       /**
@@ -2242,12 +2925,7 @@ btor_bvprop_mul_aux (BtorMemMgr *mm,
       btor_bv_free (mm, lo);
       btor_bv_free (mm, hi);
 
-      tmp_zero     = new_domain (mm);
-      tmp_zero->lo = btor_bv_zero (mm, bwo);
-      tmp_zero->hi = btor_bv_zero (mm, bwo);
-
-      tmp_slice = btor_bvprop_new_init (mm, bw);
-
+#ifndef NDEBUG
       d_zero     = new_domain (mm);
       d_zero->lo = btor_bv_zero (mm, bw);
       d_zero->hi = btor_bv_zero (mm, bw);
@@ -2255,13 +2933,20 @@ btor_bvprop_mul_aux (BtorMemMgr *mm,
       d_one     = new_domain (mm);
       d_one->lo = btor_bv_one (mm, 1);
       d_one->hi = btor_bv_one (mm, 1);
-    }
-    else
-    {
-      tmp_x        = btor_bvprop_new (mm, d_x->lo, d_x->hi);
+#endif
       tmp_zero     = new_domain (mm);
       tmp_zero->lo = btor_bv_zero (mm, bw);
       tmp_zero->hi = btor_bv_zero (mm, bw);
+
+      tmp_one     = new_domain (mm);
+      tmp_one->lo = btor_bv_one (mm, 1);
+      tmp_one->hi = btor_bv_one (mm, 1);
+
+      tmp_slice = btor_bvprop_new_init (mm, bw);
+    }
+    else
+    {
+      tmp_x = btor_bvprop_new (mm, d_x->lo, d_x->hi);
     }
 
     for (i = 0; i < bw; i++)
@@ -2358,6 +3043,19 @@ btor_bvprop_mul_aux (BtorMemMgr *mm,
          */
         bv        = BTOR_PEEK_STACK (shift_stack, i);
         tmp_shift = &d_shift_stack.start[i];
+#if 1
+        if (!(res = decomp_step_shiftc (mm,
+                                        &tmp_x,
+                                        tmp_shift,
+                                        bv,
+                                        res_d_x,
+                                        res_d_z,
+                                        btor_bvprop_sll_const,
+                                        &progress)))
+        {
+          goto DONE;
+        }
+#else
         if (!btor_bvprop_sll_const (
                 mm, tmp_x, *tmp_shift, bv, res_d_x, res_d_z))
         {
@@ -2377,22 +3075,41 @@ btor_bvprop_mul_aux (BtorMemMgr *mm,
         btor_bvprop_free (mm, *tmp_shift);
         tmp_x      = *res_d_x;
         *tmp_shift = *res_d_z;
+#endif
 
         /* ite (y[bw-1-m:bw-1-m], x << bw - 1 - m, 0) */
         tmp_c   = &d_c_stack.start[i];
         tmp_ite = &d_ite_stack.start[i];
         assert (!no_overflows || (*tmp_shift)->lo->width == bwo);
-        assert (!no_overflows || (tmp_zero)->lo->width == bwo);
+        assert (!no_overflows || (tmp_zero_bw)->lo->width == bwo);
         assert (!no_overflows || (*tmp_ite)->lo->width == bwo);
+#if 1
+        if (!(res = decomp_step_ternary (mm,
+                                         tmp_shift,
+                                         &tmp_zero_bw,
+                                         tmp_ite,
+                                         tmp_c,
+                                         res_d_x,
+                                         res_d_y,
+                                         res_d_z,
+                                         &tmp_res_c,
+                                         btor_bvprop_ite,
+                                         &progress)))
+        {
+          goto DONE;
+        }
+        assert (!btor_bv_compare (d_zero_bw->lo, tmp_zero_bw->lo));
+        assert (!btor_bv_compare (d_zero_bw->hi, tmp_zero_bw->hi));
+#else
         if (!btor_bvprop_ite (mm,
-                              *tmp_c,
                               *tmp_shift,
-                              tmp_zero,
+                              tmp_zero_bw,
                               *tmp_ite,
-                              &tmp_res_c,
+                              *tmp_c,
                               res_d_x,
                               res_d_y,
-                              res_d_z))
+                              res_d_z,
+                              &tmp_res_c))
         {
           res = false;
           btor_bvprop_free (mm, tmp_res_c);
@@ -2408,7 +3125,7 @@ btor_bvprop_mul_aux (BtorMemMgr *mm,
         if (!progress)
         {
           progress = made_progress (*tmp_shift,
-                                    tmp_zero,
+                                    tmp_zero_bw,
                                     *tmp_ite,
                                     *tmp_c,
                                     *res_d_x,
@@ -2417,14 +3134,15 @@ btor_bvprop_mul_aux (BtorMemMgr *mm,
                                     tmp_res_c);
         }
         btor_bvprop_free (mm, *tmp_shift);
-        assert (!btor_bv_compare (tmp_zero->lo, (*res_d_y)->lo)
-                && !btor_bv_compare (tmp_zero->hi, (*res_d_y)->hi));
+        assert (!btor_bv_compare (tmp_zero_bw->lo, (*res_d_y)->lo)
+                && !btor_bv_compare (tmp_zero_bw->hi, (*res_d_y)->hi));
         btor_bvprop_free (mm, *tmp_c);
         btor_bvprop_free (mm, *tmp_ite);
         *tmp_shift = *res_d_x;
         btor_bvprop_free (mm, *res_d_y);
         *tmp_ite = *res_d_z;
         *tmp_c   = tmp_res_c;
+#endif
 
         /**
          * ite (y[bw-1:bw-1], x << (bw - 1), 0)
@@ -2441,6 +3159,21 @@ btor_bvprop_mul_aux (BtorMemMgr *mm,
           tmp0 = i == 1 ? &d_ite_stack.start[i - 1] : &d_add_stack.start[i - 2];
           tmp1 = tmp_ite;
           tmp_add = &d_add_stack.start[i - 1];
+#if 1
+          if (!(res = decomp_step_binary_aux (mm,
+                                              tmp0,
+                                              tmp1,
+                                              tmp_add,
+                                              res_d_x,
+                                              res_d_y,
+                                              res_d_z,
+                                              no_overflows,
+                                              btor_bvprop_add_aux,
+                                              &progress)))
+          {
+            goto DONE;
+          }
+#else
           if (!btor_bvprop_add_aux (mm,
                                     *tmp0,
                                     *tmp1,
@@ -2470,13 +3203,32 @@ btor_bvprop_mul_aux (BtorMemMgr *mm,
           *tmp0    = *res_d_x;
           *tmp1    = *res_d_y;
           *tmp_add = *res_d_z;
+#endif
         }
       }
 
       if (no_overflows)
       {
+        assert (tmp_zero);
+        assert (tmp_one);
+        assert (tmp_slice);
+
         /* upper half of multiplication result must be 0 */
         tmp = n > 1 ? &d_add_stack.start[n - 2] : &d_ite_stack.start[0];
+#if 1
+        if (!(res = decomp_step_slice (mm,
+                                       tmp,
+                                       &tmp_slice,
+                                       bwo - 1,
+                                       bw,
+                                       res_d_x,
+                                       res_d_z,
+                                       btor_bvprop_slice,
+                                       &progress)))
+        {
+          goto DONE;
+        }
+#else
         if (!btor_bvprop_slice (
                 mm, *tmp, tmp_slice, bwo - 1, bw, res_d_x, res_d_z))
         {
@@ -2496,8 +3248,27 @@ btor_bvprop_mul_aux (BtorMemMgr *mm,
         btor_bvprop_free (mm, tmp_slice);
         *tmp      = *res_d_x;
         tmp_slice = *res_d_z;
+#endif
         assert (!no_overflows || (*tmp)->lo->width == bwo);
 
+#if 1
+        if (!(res = decomp_step_binary (mm,
+                                        &tmp_slice,
+                                        &tmp_zero,
+                                        &tmp_one,
+                                        res_d_x,
+                                        res_d_y,
+                                        res_d_z,
+                                        btor_bvprop_eq,
+                                        &progress)))
+        {
+          goto DONE;
+        }
+        assert (!btor_bv_compare (d_zero->lo, tmp_zero->lo));
+        assert (!btor_bv_compare (d_zero->hi, tmp_zero->hi));
+        assert (!btor_bv_compare (d_one->lo, tmp_one->lo));
+        assert (!btor_bv_compare (d_one->hi, tmp_one->hi));
+#else
         if (!btor_bvprop_eq (
                 mm, tmp_slice, d_zero, d_one, res_d_x, res_d_y, res_d_z))
         {
@@ -2523,6 +3294,7 @@ btor_bvprop_mul_aux (BtorMemMgr *mm,
         tmp_slice = *res_d_x;
         btor_bvprop_free (mm, *res_d_y);
         btor_bvprop_free (mm, *res_d_z);
+#endif
       }
     } while (progress);
 
@@ -2575,10 +3347,15 @@ DONE:
   *res_d_y = tmp_y;
   *res_d_z = tmp_z;
 
-  btor_bvprop_free (mm, tmp_zero);
-  if (tmp_slice) btor_bvprop_free (mm, tmp_slice);
+#ifndef NDEBUG
   if (d_one) btor_bvprop_free (mm, d_one);
   if (d_zero) btor_bvprop_free (mm, d_zero);
+  btor_bvprop_free (mm, d_zero_bw);
+#endif
+  if (tmp_one) btor_bvprop_free (mm, tmp_one);
+  if (tmp_zero) btor_bvprop_free (mm, tmp_zero);
+  btor_bvprop_free (mm, tmp_zero_bw);
+  if (tmp_slice) btor_bvprop_free (mm, tmp_slice);
 
   for (i = 0, n = BTOR_COUNT_STACK (d_c_stack); i < n; i++)
   {
@@ -2636,12 +3413,14 @@ btor_bvprop_ult (BtorMemMgr *mm,
 
   bool progress, res;
   uint32_t bw;
-  BtorBitVector *one;
   BtorBvDomain *tmp_add_1, *tmp_add_2;
   BtorBvDomain *tmp_cout_1, *tmp_cout_msb_1, *tmp_cout_2, *tmp_cout_msb_2;
   BtorBvDomain *tmp_x, *tmp_y, *tmp_not_y, *tmp_z, *tmp_cout_msb;
   BtorBvDomain *res_d_cout;
+#ifndef NDEBUG
   BtorBvDomain *d_one;
+#endif
+  BtorBvDomain *tmp_one;
 
   res = true;
 
@@ -2672,14 +3451,32 @@ btor_bvprop_ult (BtorMemMgr *mm,
   tmp_cout_msb_1 = btor_bvprop_new_init (mm, 1);
   tmp_cout_msb_2 = btor_bvprop_new_init (mm, 1);
 
-  one   = btor_bv_one (mm, bw);
-  d_one = btor_bvprop_new (mm, one, one);
+#ifndef NDEBUG
+  d_one     = new_domain (mm);
+  d_one->lo = btor_bv_one (mm, bw);
+  d_one->hi = btor_bv_one (mm, bw);
+#endif
+  tmp_one     = new_domain (mm);
+  tmp_one->lo = btor_bv_one (mm, bw);
+  tmp_one->hi = btor_bv_one (mm, bw);
 
   do
   {
     progress = false;
 
     /* not_y = ~y */
+#if 1
+    if (!(res = decomp_step_unary (mm,
+                                   &tmp_y,
+                                   &tmp_not_y,
+                                   res_d_x,
+                                   res_d_z,
+                                   btor_bvprop_not,
+                                   &progress)))
+    {
+      goto DONE;
+    }
+#else
     if (!btor_bvprop_not (mm, tmp_y, tmp_not_y, res_d_x, res_d_z))
     {
       res = false;
@@ -2698,8 +3495,28 @@ btor_bvprop_ult (BtorMemMgr *mm,
     btor_bvprop_free (mm, tmp_not_y);
     tmp_y     = *res_d_x;
     tmp_not_y = *res_d_z;
+#endif
 
     /* (add_1, cout_1) = not_y + 1 */
+#if 1
+    if (!(res = decomp_step_ternary_aux (mm,
+                                         &tmp_not_y,
+                                         &tmp_one,
+                                         &tmp_add_1,
+                                         &tmp_cout_1,
+                                         res_d_x,
+                                         res_d_y,
+                                         res_d_z,
+                                         &res_d_cout,
+                                         false,
+                                         bvprop_add_aux,
+                                         &progress)))
+    {
+      goto DONE;
+    }
+    assert (!btor_bv_compare (d_one->lo, tmp_one->lo));
+    assert (!btor_bv_compare (d_one->hi, tmp_one->hi));
+#else
     if (!bvprop_add_aux (mm,
                          tmp_not_y,
                          d_one,
@@ -2742,8 +3559,26 @@ btor_bvprop_ult (BtorMemMgr *mm,
     btor_bvprop_free (mm, *res_d_y);
     tmp_add_1  = *res_d_z;
     tmp_cout_1 = res_d_cout;
+#endif
 
     /* (add_2, cout_2) = x + add_1 */
+#if 1
+    if (!(res = decomp_step_ternary_aux (mm,
+                                         &tmp_x,
+                                         &tmp_add_1,
+                                         &tmp_add_2,
+                                         &tmp_cout_2,
+                                         res_d_x,
+                                         res_d_y,
+                                         res_d_z,
+                                         &res_d_cout,
+                                         false,
+                                         bvprop_add_aux,
+                                         &progress)))
+    {
+      goto DONE;
+    }
+#else
     if (!bvprop_add_aux (mm,
                          tmp_x,
                          tmp_add_1,
@@ -2785,8 +3620,23 @@ btor_bvprop_ult (BtorMemMgr *mm,
     tmp_add_1  = *res_d_y;
     tmp_add_2  = *res_d_z;
     tmp_cout_2 = res_d_cout;
+#endif
 
     /* cout_msb_1 = cout(add_1)[MSB:MSB] */
+#if 1
+    if (!(res = decomp_step_slice (mm,
+                                   &tmp_cout_1,
+                                   &tmp_cout_msb_1,
+                                   bw - 1,
+                                   bw - 1,
+                                   res_d_x,
+                                   res_d_z,
+                                   btor_bvprop_slice,
+                                   &progress)))
+    {
+      goto DONE;
+    }
+#else
     if (!btor_bvprop_slice (
             mm, tmp_cout_1, tmp_cout_msb_1, bw - 1, bw - 1, res_d_x, res_d_z))
     {
@@ -2806,8 +3656,23 @@ btor_bvprop_ult (BtorMemMgr *mm,
     btor_bvprop_free (mm, tmp_cout_msb_1);
     tmp_cout_1     = *res_d_x;
     tmp_cout_msb_1 = *res_d_z;
+#endif
 
     /* cout_msb_2 = cout(add_2))[MSB:MSB] */
+#if 1
+    if (!(res = decomp_step_slice (mm,
+                                   &tmp_cout_2,
+                                   &tmp_cout_msb_2,
+                                   bw - 1,
+                                   bw - 1,
+                                   res_d_x,
+                                   res_d_z,
+                                   btor_bvprop_slice,
+                                   &progress)))
+    {
+      goto DONE;
+    }
+#else
     if (!btor_bvprop_slice (
             mm, tmp_cout_2, tmp_cout_msb_2, bw - 1, bw - 1, res_d_x, res_d_z))
     {
@@ -2827,8 +3692,23 @@ btor_bvprop_ult (BtorMemMgr *mm,
     btor_bvprop_free (mm, tmp_cout_msb_2);
     tmp_cout_2     = *res_d_x;
     tmp_cout_msb_2 = *res_d_z;
+#endif
 
     /* cout_msb = cout_msb_1 | cout_msb_2 */
+#if 1
+    if (!(res = decomp_step_binary (mm,
+                                    &tmp_cout_msb_1,
+                                    &tmp_cout_msb_2,
+                                    &tmp_cout_msb,
+                                    res_d_x,
+                                    res_d_y,
+                                    res_d_z,
+                                    btor_bvprop_or,
+                                    &progress)))
+    {
+      goto DONE;
+    }
+#else
     if (!btor_bvprop_or (mm,
                          tmp_cout_msb_1,
                          tmp_cout_msb_2,
@@ -2863,8 +3743,21 @@ btor_bvprop_ult (BtorMemMgr *mm,
     tmp_cout_msb_1 = *res_d_x;
     tmp_cout_msb_2 = *res_d_y;
     tmp_cout_msb   = *res_d_z;
+#endif
 
     /* z = ~cout_msb */
+#if 1
+    if (!(res = decomp_step_unary (mm,
+                                   &tmp_cout_msb,
+                                   &tmp_z,
+                                   res_d_x,
+                                   res_d_z,
+                                   btor_bvprop_not,
+                                   &progress)))
+    {
+      goto DONE;
+    }
+#else
     if (!btor_bvprop_not (mm, tmp_cout_msb, tmp_z, res_d_x, res_d_z))
     {
       res = false;
@@ -2883,6 +3776,7 @@ btor_bvprop_ult (BtorMemMgr *mm,
     btor_bvprop_free (mm, tmp_z);
     tmp_cout_msb = *res_d_x;
     tmp_z        = *res_d_z;
+#endif
   } while (progress);
 
   assert (btor_bvprop_is_valid (mm, tmp_x));
@@ -2902,8 +3796,10 @@ DONE:
   btor_bvprop_free (mm, tmp_cout_msb);
   btor_bvprop_free (mm, tmp_cout_msb_1);
   btor_bvprop_free (mm, tmp_cout_msb_2);
+#ifndef NDEBUG
   btor_bvprop_free (mm, d_one);
-  btor_bv_free (mm, one);
+#endif
+  btor_bvprop_free (mm, tmp_one);
 
   return res;
 }
@@ -2930,7 +3826,10 @@ btor_bvprop_udiv (BtorMemMgr *mm,
   BtorBvDomain *tmp_x, *tmp_y, *tmp_z;
   BtorBvDomain *tmp_m, *tmp_r, *tmp_eq_y, *tmp_not_eq_y, *tmp_eq_z, *tmp_ite;
   BtorBvDomain *res_d_c;
+#ifndef NDEBUG
   BtorBvDomain *d_one, *d_zero, *d_zero_bw, *d_ones_bw;
+#endif
+  BtorBvDomain *tmp_one, *tmp_zero, *tmp_zero_bw, *tmp_ones_bw;
 
   res = true;
 
@@ -2968,6 +3867,7 @@ btor_bvprop_udiv (BtorMemMgr *mm,
   tmp_eq_z     = btor_bvprop_new_init (mm, 1);
   tmp_ite      = btor_bvprop_new_init (mm, 1);
 
+#ifndef NDEBUG
   d_one     = new_domain (mm);
   d_one->lo = btor_bv_one (mm, 1);
   d_one->hi = btor_bv_one (mm, 1);
@@ -2983,12 +3883,44 @@ btor_bvprop_udiv (BtorMemMgr *mm,
   d_ones_bw     = new_domain (mm);
   d_ones_bw->lo = btor_bv_ones (mm, bw);
   d_ones_bw->hi = btor_bv_ones (mm, bw);
+#endif
+
+  tmp_one     = new_domain (mm);
+  tmp_one->lo = btor_bv_one (mm, 1);
+  tmp_one->hi = btor_bv_one (mm, 1);
+
+  tmp_zero     = new_domain (mm);
+  tmp_zero->lo = btor_bv_zero (mm, 1);
+  tmp_zero->hi = btor_bv_zero (mm, 1);
+
+  tmp_zero_bw     = new_domain (mm);
+  tmp_zero_bw->lo = btor_bv_zero (mm, bw);
+  tmp_zero_bw->hi = btor_bv_zero (mm, bw);
+
+  tmp_ones_bw     = new_domain (mm);
+  tmp_ones_bw->lo = btor_bv_ones (mm, bw);
+  tmp_ones_bw->hi = btor_bv_ones (mm, bw);
 
   do
   {
     progress = false;
 
     /* m = y * z (no overflows) */
+#if 1
+    if (!(res = decomp_step_binary_aux (mm,
+                                        &tmp_y,
+                                        &tmp_z,
+                                        &tmp_m,
+                                        res_d_x,
+                                        res_d_y,
+                                        res_d_z,
+                                        true,
+                                        btor_bvprop_mul_aux,
+                                        &progress)))
+    {
+      goto DONE;
+    }
+#else
     if (!btor_bvprop_mul_aux (
             mm, tmp_y, tmp_z, tmp_m, res_d_x, res_d_y, res_d_z, true))
     {
@@ -3012,8 +3944,26 @@ btor_bvprop_udiv (BtorMemMgr *mm,
     tmp_y = *res_d_x;
     tmp_z = *res_d_y;
     tmp_m = *res_d_z;
+#endif
 
     /* x = m + r (no overflows) */
+#if 1
+    if (!(res = decomp_step_ternary_aux (mm,
+                                         &tmp_m,
+                                         &tmp_r,
+                                         &tmp_x,
+                                         0,
+                                         res_d_x,
+                                         res_d_y,
+                                         res_d_z,
+                                         0,
+                                         true,
+                                         bvprop_add_aux,
+                                         &progress)))
+    {
+      goto DONE;
+    }
+#else
     if (!bvprop_add_aux (
             mm, tmp_m, tmp_r, tmp_x, 0, res_d_x, res_d_y, res_d_z, 0, true))
     {
@@ -3037,8 +3987,23 @@ btor_bvprop_udiv (BtorMemMgr *mm,
     tmp_m = *res_d_x;
     tmp_r = *res_d_y;
     tmp_x = *res_d_z;
+#endif
 
     /* eq_y = y == 0 */
+#if 1
+    if (!(res = decomp_step_binary (mm,
+                                    &tmp_y,
+                                    &d_zero_bw,
+                                    &tmp_eq_y,
+                                    res_d_x,
+                                    res_d_y,
+                                    res_d_z,
+                                    btor_bvprop_eq,
+                                    &progress)))
+    {
+      goto DONE;
+    }
+#else
     if (!btor_bvprop_eq (
             mm, tmp_y, d_zero_bw, tmp_eq_y, res_d_x, res_d_y, res_d_z))
     {
@@ -3063,17 +4028,38 @@ btor_bvprop_udiv (BtorMemMgr *mm,
     tmp_y    = *res_d_x;
     tmp_eq_y = *res_d_z;
     btor_bvprop_free (mm, *res_d_y);
+#endif
 
     /* ite = eq_y ? 0 : 1 */
+#if 1
+    if (!(res = decomp_step_ternary (mm,
+                                     &tmp_zero,
+                                     &tmp_one,
+                                     &tmp_ite,
+                                     &tmp_eq_y,
+                                     res_d_x,
+                                     res_d_y,
+                                     res_d_z,
+                                     &res_d_c,
+                                     btor_bvprop_ite,
+                                     &progress)))
+    {
+      goto DONE;
+    }
+    assert (!btor_bv_compare (d_zero->lo, tmp_zero->lo));
+    assert (!btor_bv_compare (d_zero->hi, tmp_zero->hi));
+    assert (!btor_bv_compare (d_one->lo, tmp_one->lo));
+    assert (!btor_bv_compare (d_one->hi, tmp_one->hi));
+#else
     if (!btor_bvprop_ite (mm,
-                          tmp_eq_y,
                           d_zero,
                           d_one,
                           tmp_ite,
-                          &res_d_c,
+                          tmp_eq_y,
                           res_d_x,
                           res_d_y,
-                          res_d_z))
+                          res_d_z,
+                          &res_d_c))
     {
       res = false;
       btor_bvprop_free (mm, res_d_c);
@@ -3107,8 +4093,23 @@ btor_bvprop_udiv (BtorMemMgr *mm,
     btor_bvprop_free (mm, tmp_eq_y);
     tmp_ite  = *res_d_z;
     tmp_eq_y = res_d_c;
+#endif
 
     /* ite = r < y */
+#if 1
+    if (!(res = decomp_step_binary (mm,
+                                    &tmp_r,
+                                    &tmp_y,
+                                    &tmp_ite,
+                                    res_d_x,
+                                    res_d_y,
+                                    res_d_z,
+                                    btor_bvprop_ult,
+                                    &progress)))
+    {
+      goto DONE;
+    }
+#else
     if (!btor_bvprop_ult (mm, tmp_r, tmp_y, tmp_ite, res_d_x, res_d_y, res_d_z))
     {
       res = false;
@@ -3131,8 +4132,21 @@ btor_bvprop_udiv (BtorMemMgr *mm,
     tmp_r   = *res_d_x;
     tmp_y   = *res_d_y;
     tmp_ite = *res_d_z;
+#endif
 
     /* not_eq_y = ~eq */
+#if 1
+    if (!(res = decomp_step_unary (mm,
+                                   &tmp_eq_y,
+                                   &tmp_not_eq_y,
+                                   res_d_x,
+                                   res_d_z,
+                                   btor_bvprop_not,
+                                   &progress)))
+    {
+      goto DONE;
+    }
+#else
     if (!btor_bvprop_not (mm, tmp_eq_y, tmp_not_eq_y, res_d_x, res_d_z))
     {
       res = false;
@@ -3151,8 +4165,25 @@ btor_bvprop_udiv (BtorMemMgr *mm,
     btor_bvprop_free (mm, tmp_not_eq_y);
     tmp_eq_y     = *res_d_x;
     tmp_not_eq_y = *res_d_z;
+#endif
 
     /* eq_z = z == ~0 */
+#if 1
+    if (!(res = decomp_step_binary (mm,
+                                    &tmp_z,
+                                    &tmp_ones_bw,
+                                    &tmp_eq_z,
+                                    res_d_x,
+                                    res_d_y,
+                                    res_d_z,
+                                    btor_bvprop_eq,
+                                    &progress)))
+    {
+      goto DONE;
+    }
+    assert (!btor_bv_compare (d_ones_bw->lo, tmp_ones_bw->lo));
+    assert (!btor_bv_compare (d_ones_bw->hi, tmp_ones_bw->hi));
+#else
     if (!btor_bvprop_eq (
             mm, tmp_z, d_ones_bw, tmp_eq_z, res_d_x, res_d_y, res_d_z))
     {
@@ -3177,8 +4208,25 @@ btor_bvprop_udiv (BtorMemMgr *mm,
     tmp_z    = *res_d_x;
     tmp_eq_z = *res_d_z;
     btor_bvprop_free (mm, *res_d_y);
+#endif
 
     /* 1 = not_eq_y | eq_z */
+#if 1
+    if (!(res = decomp_step_binary (mm,
+                                    &tmp_not_eq_y,
+                                    &tmp_eq_z,
+                                    &tmp_one,
+                                    res_d_x,
+                                    res_d_y,
+                                    res_d_z,
+                                    btor_bvprop_or,
+                                    &progress)))
+    {
+      goto DONE;
+    }
+    assert (!btor_bv_compare (d_one->lo, tmp_one->lo));
+    assert (!btor_bv_compare (d_one->hi, tmp_one->hi));
+#else
     if (!btor_bvprop_or (
             mm, tmp_not_eq_y, tmp_eq_z, d_one, res_d_x, res_d_y, res_d_z))
     {
@@ -3198,6 +4246,7 @@ btor_bvprop_udiv (BtorMemMgr *mm,
     tmp_not_eq_y = *res_d_x;
     tmp_eq_z     = *res_d_y;
     btor_bvprop_free (mm, *res_d_z);
+#endif
 
   } while (progress);
 
@@ -3216,10 +4265,16 @@ DONE:
   btor_bvprop_free (mm, tmp_not_eq_y);
   btor_bvprop_free (mm, tmp_eq_z);
   btor_bvprop_free (mm, tmp_ite);
+#ifndef NDEBUG
   btor_bvprop_free (mm, d_one);
   btor_bvprop_free (mm, d_zero);
   btor_bvprop_free (mm, d_zero_bw);
   btor_bvprop_free (mm, d_ones_bw);
+#endif
+  btor_bvprop_free (mm, tmp_one);
+  btor_bvprop_free (mm, tmp_zero);
+  btor_bvprop_free (mm, tmp_zero_bw);
+  btor_bvprop_free (mm, tmp_ones_bw);
 
   return res;
 }
@@ -3246,7 +4301,10 @@ btor_bvprop_urem (BtorMemMgr *mm,
   BtorBvDomain *tmp_x, *tmp_y, *tmp_z;
   BtorBvDomain *tmp_m, *tmp_q, *tmp_eq_y, *tmp_not_eq_y, *tmp_eq_z, *tmp_ite;
   BtorBvDomain *res_d_c;
+#ifndef NDEBUG
   BtorBvDomain *d_one, *d_zero, *d_zero_bw;
+#endif
+  BtorBvDomain *tmp_one, *tmp_zero, *tmp_zero_bw;
 
   res = true;
 
@@ -3284,6 +4342,7 @@ btor_bvprop_urem (BtorMemMgr *mm,
   tmp_eq_z     = btor_bvprop_new_init (mm, 1);
   tmp_ite      = btor_bvprop_new_init (mm, 1);
 
+#ifndef NDEBUG
   d_one     = new_domain (mm);
   d_one->lo = btor_bv_one (mm, 1);
   d_one->hi = btor_bv_one (mm, 1);
@@ -3295,12 +4354,39 @@ btor_bvprop_urem (BtorMemMgr *mm,
   d_zero_bw     = new_domain (mm);
   d_zero_bw->lo = btor_bv_zero (mm, bw);
   d_zero_bw->hi = btor_bv_zero (mm, bw);
+#endif
+  tmp_one     = new_domain (mm);
+  tmp_one->lo = btor_bv_one (mm, 1);
+  tmp_one->hi = btor_bv_one (mm, 1);
+
+  tmp_zero     = new_domain (mm);
+  tmp_zero->lo = btor_bv_zero (mm, 1);
+  tmp_zero->hi = btor_bv_zero (mm, 1);
+
+  tmp_zero_bw     = new_domain (mm);
+  tmp_zero_bw->lo = btor_bv_zero (mm, bw);
+  tmp_zero_bw->hi = btor_bv_zero (mm, bw);
 
   do
   {
     progress = false;
 
     /* m = y * q (no overflows) */
+#if 1
+    if (!(res = decomp_step_binary_aux (mm,
+                                        &tmp_y,
+                                        &tmp_q,
+                                        &tmp_m,
+                                        res_d_x,
+                                        res_d_y,
+                                        res_d_z,
+                                        true,
+                                        btor_bvprop_mul_aux,
+                                        &progress)))
+    {
+      goto DONE;
+    }
+#else
     if (!btor_bvprop_mul_aux (
             mm, tmp_y, tmp_q, tmp_m, res_d_x, res_d_y, res_d_z, true))
     {
@@ -3324,8 +4410,26 @@ btor_bvprop_urem (BtorMemMgr *mm,
     tmp_y = *res_d_x;
     tmp_q = *res_d_y;
     tmp_m = *res_d_z;
+#endif
 
     /* x = m + z (no overflows) */
+#if 1
+    if (!(res = decomp_step_ternary_aux (mm,
+                                         &tmp_m,
+                                         &tmp_z,
+                                         &tmp_x,
+                                         0,
+                                         res_d_x,
+                                         res_d_y,
+                                         res_d_z,
+                                         0,
+                                         true,
+                                         bvprop_add_aux,
+                                         &progress)))
+    {
+      goto DONE;
+    }
+#else
     if (!bvprop_add_aux (
             mm, tmp_m, tmp_z, tmp_x, 0, res_d_x, res_d_y, res_d_z, 0, true))
     {
@@ -3349,8 +4453,25 @@ btor_bvprop_urem (BtorMemMgr *mm,
     tmp_m = *res_d_x;
     tmp_z = *res_d_y;
     tmp_x = *res_d_z;
+#endif
 
     /* eq_y = y == 0 */
+#if 1
+    if (!(res = decomp_step_binary (mm,
+                                    &tmp_y,
+                                    &tmp_zero_bw,
+                                    &tmp_eq_y,
+                                    res_d_x,
+                                    res_d_y,
+                                    res_d_z,
+                                    btor_bvprop_eq,
+                                    &progress)))
+    {
+      goto DONE;
+    }
+    assert (!btor_bv_compare (d_zero_bw->lo, tmp_zero_bw->lo));
+    assert (!btor_bv_compare (d_zero_bw->hi, tmp_zero_bw->hi));
+#else
     if (!btor_bvprop_eq (
             mm, tmp_y, d_zero_bw, tmp_eq_y, res_d_x, res_d_y, res_d_z))
     {
@@ -3375,17 +4496,38 @@ btor_bvprop_urem (BtorMemMgr *mm,
     tmp_y    = *res_d_x;
     tmp_eq_y = *res_d_z;
     btor_bvprop_free (mm, *res_d_y);
+#endif
 
     /* ite = eq_y ? 0 : 1 */
+#if 1
+    if (!(res = decomp_step_ternary (mm,
+                                     &tmp_zero,
+                                     &tmp_one,
+                                     &tmp_ite,
+                                     &tmp_eq_y,
+                                     res_d_x,
+                                     res_d_y,
+                                     res_d_z,
+                                     &res_d_c,
+                                     btor_bvprop_ite,
+                                     &progress)))
+    {
+      goto DONE;
+    }
+    assert (!btor_bv_compare (d_zero->lo, tmp_zero->lo));
+    assert (!btor_bv_compare (d_zero->hi, tmp_zero->hi));
+    assert (!btor_bv_compare (d_one->lo, tmp_one->lo));
+    assert (!btor_bv_compare (d_one->hi, tmp_one->hi));
+#else
     if (!btor_bvprop_ite (mm,
-                          tmp_eq_y,
                           d_zero,
                           d_one,
                           tmp_ite,
-                          &res_d_c,
+                          tmp_eq_y,
                           res_d_x,
                           res_d_y,
-                          res_d_z))
+                          res_d_z,
+                          &res_d_c))
     {
       res = false;
       btor_bvprop_free (mm, res_d_c);
@@ -3419,8 +4561,23 @@ btor_bvprop_urem (BtorMemMgr *mm,
     btor_bvprop_free (mm, tmp_eq_y);
     tmp_ite  = *res_d_z;
     tmp_eq_y = res_d_c;
+#endif
 
     /* ite = z < y */
+#if 1
+    if (!(res = decomp_step_binary (mm,
+                                    &tmp_z,
+                                    &tmp_y,
+                                    &tmp_ite,
+                                    res_d_x,
+                                    res_d_y,
+                                    res_d_z,
+                                    btor_bvprop_ult,
+                                    &progress)))
+    {
+      goto DONE;
+    }
+#else
     if (!btor_bvprop_ult (mm, tmp_z, tmp_y, tmp_ite, res_d_x, res_d_y, res_d_z))
     {
       res = false;
@@ -3443,8 +4600,21 @@ btor_bvprop_urem (BtorMemMgr *mm,
     tmp_z   = *res_d_x;
     tmp_y   = *res_d_y;
     tmp_ite = *res_d_z;
+#endif
 
     /* not_eq_y = ~eq */
+#if 1
+    if (!(res = decomp_step_unary (mm,
+                                   &tmp_eq_y,
+                                   &tmp_not_eq_y,
+                                   res_d_x,
+                                   res_d_z,
+                                   btor_bvprop_not,
+                                   &progress)))
+    {
+      goto DONE;
+    }
+#else
     if (!btor_bvprop_not (mm, tmp_eq_y, tmp_not_eq_y, res_d_x, res_d_z))
     {
       res = false;
@@ -3463,8 +4633,23 @@ btor_bvprop_urem (BtorMemMgr *mm,
     btor_bvprop_free (mm, tmp_not_eq_y);
     tmp_eq_y     = *res_d_x;
     tmp_not_eq_y = *res_d_z;
+#endif
 
     /* eq_z = z == x */
+#if 1
+    if (!(res = decomp_step_binary (mm,
+                                    &tmp_z,
+                                    &tmp_x,
+                                    &tmp_eq_z,
+                                    res_d_x,
+                                    res_d_y,
+                                    res_d_z,
+                                    btor_bvprop_eq,
+                                    &progress)))
+    {
+      goto DONE;
+    }
+#else
     if (!btor_bvprop_eq (mm, tmp_z, tmp_x, tmp_eq_z, res_d_x, res_d_y, res_d_z))
     {
       res = false;
@@ -3487,8 +4672,25 @@ btor_bvprop_urem (BtorMemMgr *mm,
     tmp_z    = *res_d_x;
     tmp_x    = *res_d_y;
     tmp_eq_z = *res_d_z;
+#endif
 
     /* 1 = not_eq_y | eq_z */
+#if 1
+    if (!(res = decomp_step_binary (mm,
+                                    &tmp_not_eq_y,
+                                    &tmp_eq_z,
+                                    &tmp_one,
+                                    res_d_x,
+                                    res_d_y,
+                                    res_d_z,
+                                    btor_bvprop_or,
+                                    &progress)))
+    {
+      goto DONE;
+    }
+    assert (!btor_bv_compare (d_one->lo, tmp_one->lo));
+    assert (!btor_bv_compare (d_one->hi, tmp_one->hi));
+#else
     if (!btor_bvprop_or (
             mm, tmp_not_eq_y, tmp_eq_z, d_one, res_d_x, res_d_y, res_d_z))
     {
@@ -3508,6 +4710,7 @@ btor_bvprop_urem (BtorMemMgr *mm,
     tmp_not_eq_y = *res_d_x;
     tmp_eq_z     = *res_d_y;
     btor_bvprop_free (mm, *res_d_z);
+#endif
 
   } while (progress);
 
@@ -3526,9 +4729,14 @@ DONE:
   btor_bvprop_free (mm, tmp_not_eq_y);
   btor_bvprop_free (mm, tmp_eq_z);
   btor_bvprop_free (mm, tmp_ite);
+#ifndef NDEBUG
   btor_bvprop_free (mm, d_one);
   btor_bvprop_free (mm, d_zero);
   btor_bvprop_free (mm, d_zero_bw);
+#endif
+  btor_bvprop_free (mm, tmp_one);
+  btor_bvprop_free (mm, tmp_zero);
+  btor_bvprop_free (mm, tmp_zero_bw);
 
   return res;
 }

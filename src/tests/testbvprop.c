@@ -1871,7 +1871,7 @@ ite_bvprop (uint32_t bw)
           d_y = create_domain (consts[k]);
 
           res = btor_bvprop_ite (
-              g_mm, d_c, d_x, d_y, d_z, &res_c, &res_x, &res_y, &res_z);
+              g_mm, d_x, d_y, d_z, d_c, &res_x, &res_y, &res_z, &res_c);
           check_sat (d_x,
                      d_y,
                      d_z,
@@ -1886,7 +1886,7 @@ ite_bvprop (uint32_t bw)
                      0,
                      0,
                      0,
-                     false, /* we always get an invalid result if invalid */
+                     true,
                      res);
           if (res) check_ite (res_x, res_y, res_z, res_c);
 
