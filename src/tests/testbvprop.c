@@ -841,12 +841,12 @@ check_sat (BtorBvDomain *d_x,
     }
     boolector_push (btor, 1);
     check_sat_fix_bits (btor, x, str_res_x);
-    if (str_y)
+    if (str_res_y)
     {
       check_sat_fix_bits (btor, y, str_res_y);
     }
     check_sat_fix_bits (btor, z, str_res_z);
-    if (str_c)
+    if (str_res_c)
     {
       check_sat_fix_bits (btor, c, str_res_c);
     }
