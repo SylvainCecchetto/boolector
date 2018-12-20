@@ -2771,7 +2771,7 @@ btor_bvprop_mul_aux (BtorMemMgr *mm,
   BtorBvDomainPtrStack d_c_stack, d_shift_stack, d_ite_stack, d_add_stack;
   BtorBitVectorPtrStack shift_stack;
 
-  res = true;
+  progress = false;
 
   BTOR_INIT_STACK (mm, d_c_stack);
   BTOR_INIT_STACK (mm, d_shift_stack);
@@ -3970,7 +3970,7 @@ btor_bvprop_udiv (BtorMemMgr *mm,
 #if 1
     if (!(res = decomp_step_binary (mm,
                                     &tmp_y,
-                                    &d_zero_bw,
+                                    &tmp_zero_bw,
                                     &tmp_eq_y,
                                     res_d_x,
                                     res_d_y,
@@ -3980,6 +3980,8 @@ btor_bvprop_udiv (BtorMemMgr *mm,
     {
       goto DONE;
     }
+    assert (!btor_bv_compare (d_zero_bw->lo, tmp_zero_bw->lo));
+    assert (!btor_bv_compare (d_zero_bw->hi, tmp_zero_bw->hi));
 #else
     if (!btor_bvprop_eq (
             mm, tmp_y, d_zero_bw, tmp_eq_y, res_d_x, res_d_y, res_d_z))
