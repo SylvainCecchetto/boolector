@@ -30,6 +30,25 @@ static BtorMemMgr *g_mm;
 static Btor *g_btor;
 static BtorAIGVecMgr *g_avmgr;
 
+
+typedef enum {
+  TEST_BVPROP_ADD,
+  TEST_BVPROP_AND,
+  TEST_BVPROP_CONCAT,
+  TEST_BVPROP_EQ,
+  TEST_BVPROP_ITE,
+  TEST_BVPROP_MUL,
+  TEST_BVPROP_OR,
+  TEST_BVPROP_SLICE,
+  TEST_BVPROP_SLL,
+  TEST_BVPROP_SRL,
+  TEST_BVPROP_UDIV,
+  TEST_BVPROP_ULT,
+  TEST_BVPROP_UREM,
+  TEST_BVPROP_XOR
+} BvPropOp;
+
+
 /*------------------------------------------------------------------------*/
 
 #define TEST_BVPROP_RELEASE_D_XZ  \
@@ -534,19 +553,53 @@ print_aigvec (BtorAIGVec *av)
   }
 }
 
+static BtorAIGVec *
+aigvec_or (BtorAIGVec *a, BtorAIGVec *b)
+{
+  BtorAIGVec *not_a, *not_b, *and, *result;
+  not_a  = btor_aigvec_not (g_avmgr, a);
+  not_b  = btor_aigvec_not (g_avmgr, b);
+  and    = btor_aigvec_and (g_avmgr, not_a, not_b);
+  result = btor_aigvec_not (g_avmgr, and);
+  btor_aigvec_release_delete (g_avmgr, not_a);
+  btor_aigvec_release_delete (g_avmgr, not_b);
+  btor_aigvec_release_delete (g_avmgr, and);
+  return result;
+}
+
+static BtorAIGVec *
+aigvec_xor (BtorAIGVec *a, BtorAIGVec *b)
+{
+  BtorAIGVec *or, *and, *not_and, *result;
+  or      = aigvec_or (a, b);
+  and     = btor_aigvec_and (g_avmgr, a, b);
+  not_and = btor_aigvec_not (g_avmgr, and);
+  result  = btor_aigvec_and (g_avmgr, or, not_and);
+  btor_aigvec_release_delete (g_avmgr, or);
+  btor_aigvec_release_delete (g_avmgr, and);
+  btor_aigvec_release_delete (g_avmgr, not_and);
+  return result;
+}
+
 static bool
 check_synth (BtorBvDomain *d_x,
              BtorBvDomain *d_y,
              BtorBvDomain *d_z,
              BtorBvDomain *d_c,
              BtorBvDomain *res_z,
-             BtorNodeKind kind,
+             int32_t op,
              uint32_t upper,
              uint32_t lower)
 {
   BtorAIGVec *av_x = 0, *av_y = 0, *av_c = 0, *av_res = 0;
 
   if (btor_bvprop_has_fixed_bits (g_mm, d_z))
+  {
+    return true;
+  }
+  if ((op == TEST_BVPROP_SLL || op == TEST_BVPROP_SRL)
+      && (!btor_util_is_power_of_2 (d_x->lo->width)
+          || btor_util_log_2 (d_x->lo->width) != d_y->lo->width))
   {
     return true;
   }
@@ -565,52 +618,44 @@ check_synth (BtorBvDomain *d_x,
     av_c = aigvec_from_domain (d_c);
   }
 
-  switch (kind)
+  switch (op)
   {
-    case BTOR_BV_SLICE_NODE:
+    case TEST_BVPROP_SLICE:
       av_res = btor_aigvec_slice (g_avmgr, av_x, upper, lower);
       break;
 
-    case BTOR_BV_AND_NODE:
-      av_res = btor_aigvec_and (g_avmgr, av_x, av_y);
-      break;
+    case TEST_BVPROP_AND: av_res = btor_aigvec_and (g_avmgr, av_x, av_y); break;
 
-    case BTOR_BV_EQ_NODE: av_res = btor_aigvec_eq (g_avmgr, av_x, av_y); break;
+    case TEST_BVPROP_OR: av_res = aigvec_or (av_x, av_y); break;
 
-    case BTOR_BV_ADD_NODE:
-      av_res = btor_aigvec_add (g_avmgr, av_x, av_y);
-      break;
+    case TEST_BVPROP_XOR: av_res = aigvec_xor (av_x, av_y); break;
 
-    case BTOR_BV_MUL_NODE:
-      av_res = btor_aigvec_mul (g_avmgr, av_x, av_y);
-      break;
+    case TEST_BVPROP_EQ: av_res = btor_aigvec_eq (g_avmgr, av_x, av_y); break;
 
-    case BTOR_BV_ULT_NODE:
-      av_res = btor_aigvec_ult (g_avmgr, av_x, av_y);
-      break;
+    case TEST_BVPROP_ADD: av_res = btor_aigvec_add (g_avmgr, av_x, av_y); break;
 
-    case BTOR_BV_SLL_NODE:
-      av_res = btor_aigvec_sll (g_avmgr, av_x, av_y);
-      break;
+    case TEST_BVPROP_MUL: av_res = btor_aigvec_mul (g_avmgr, av_x, av_y); break;
 
-    case BTOR_BV_SRL_NODE:
-      av_res = btor_aigvec_srl (g_avmgr, av_x, av_y);
-      break;
+    case TEST_BVPROP_ULT: av_res = btor_aigvec_ult (g_avmgr, av_x, av_y); break;
 
-    case BTOR_BV_UDIV_NODE:
+    case TEST_BVPROP_SLL: av_res = btor_aigvec_sll (g_avmgr, av_x, av_y); break;
+
+    case TEST_BVPROP_SRL: av_res = btor_aigvec_srl (g_avmgr, av_x, av_y); break;
+
+    case TEST_BVPROP_UDIV:
       av_res = btor_aigvec_udiv (g_avmgr, av_x, av_y);
       break;
 
-    case BTOR_BV_UREM_NODE:
+    case TEST_BVPROP_UREM:
       av_res = btor_aigvec_urem (g_avmgr, av_x, av_y);
       break;
 
-    case BTOR_BV_CONCAT_NODE:
+    case TEST_BVPROP_CONCAT:
       av_res = btor_aigvec_concat (g_avmgr, av_x, av_y);
       break;
 
     default:
-      assert (kind == BTOR_COND_NODE);
+      assert (op == TEST_BVPROP_ITE);
       av_res = btor_aigvec_cond (g_avmgr, av_c, av_x, av_y);
   }
 
@@ -827,6 +872,7 @@ check_sat (BtorBvDomain *d_x,
                   || !is_fixed (g_mm, res_x, res_y, res_z, res_c))));
 
   /* Check correctness of results res_* for valid domains. */
+#if 0
   if (valid)
   {
     str_res_x = from_domain (g_mm, res_x);
@@ -896,6 +942,7 @@ check_sat (BtorBvDomain *d_x,
       btor_mem_freestr (g_mm, str_res_c);
     }
   }
+#endif
 
   // printf ("sat_res %d\n", sat_res);
   // if (sat_res == BOOLECTOR_SAT)
@@ -1022,10 +1069,9 @@ eq_bvprop (uint32_t bw)
                    0,
                    true,
                    res);
-        //        assert (
-        //            !res
-        //            || check_synth (d_x, d_y, d_z, 0, res_z, BTOR_BV_EQ_NODE,
-        //            0, 0));
+        assert (
+            !res
+            || check_synth (d_x, d_y, d_z, 0, res_z, TEST_BVPROP_EQ, 0, 0));
 
         if (res && btor_bvprop_is_fixed (g_mm, d_x)
             && btor_bvprop_is_fixed (g_mm, d_y))
@@ -1176,6 +1222,9 @@ shift_const_bvprop_aux (uint32_t bw, bool is_srl)
                      0,
                      false,
                      res);
+          assert (
+              !res
+              || check_synth (d_x, d_y, d_z, 0, res_z, TEST_BVPROP_SRL, 0, 0));
         }
         else
         {
@@ -1196,6 +1245,9 @@ shift_const_bvprop_aux (uint32_t bw, bool is_srl)
                      0,
                      false,
                      res);
+          assert (
+              !res
+              || check_synth (d_x, d_y, d_z, 0, res_z, TEST_BVPROP_SLL, 0, 0));
         }
         assert (res || !is_valid (g_mm, res_x, 0, res_z, 0));
 
@@ -1276,6 +1328,9 @@ shift_bvprop_aux (uint32_t bw, bool is_srl)
                      0,
                      true,
                      res);
+          assert (
+              !res
+              || check_synth (d_x, d_y, d_z, 0, res_z, TEST_BVPROP_SRL, 0, 0));
         }
         else
         {
@@ -1296,6 +1351,9 @@ shift_bvprop_aux (uint32_t bw, bool is_srl)
                      0,
                      true,
                      res);
+          assert (
+              !res
+              || check_synth (d_x, d_y, d_z, 0, res_z, TEST_BVPROP_SLL, 0, 0));
         }
 
         assert (!btor_bvprop_is_fixed (g_mm, d_x)
@@ -1329,10 +1387,6 @@ srl_bvprop (uint32_t bw)
 {
   shift_bvprop_aux (bw, true);
 }
-
-#define TEST_BVPROP_AND 0
-#define TEST_BVPROP_OR 1
-#define TEST_BVPROP_XOR 2
 
 void
 and_or_xor_bvprop_aux (int32_t op, uint32_t bw)
@@ -1408,6 +1462,8 @@ and_or_xor_bvprop_aux (int32_t op, uint32_t bw)
                    0,
                    false,
                    res);
+
+        assert (!res || check_synth (d_x, d_y, d_z, 0, res_z, op, 0, 0));
 
         to_str (res_x, &str_res_x, 0, true);
         to_str (res_y, &str_res_y, 0, true);
@@ -1619,6 +1675,10 @@ slice_bvprop (uint32_t bw)
                      lower,
                      false,
                      res);
+          assert (
+              !res
+              || check_synth (
+                     d_x, 0, d_z, 0, res_z, TEST_BVPROP_SLICE, upper, lower));
 
           assert (!btor_bvprop_is_fixed (g_mm, d_x)
                   || !btor_bvprop_is_valid (g_mm, res_x)
@@ -2024,10 +2084,9 @@ mul_bvprop (uint32_t bw, bool no_overflows)
                    0,
                    true,
                    res);
-        //        assert (
-        //            !res
-        //            || check_synth (d_x, d_y, d_z, 0, res_z, BTOR_BV_MUL_NODE,
-        //            0, 0));
+        assert (
+            !res
+            || check_synth (d_x, d_y, d_z, 0, res_z, TEST_BVPROP_MUL, 0, 0));
 
         if (btor_bvprop_is_fixed (g_mm, d_x)
             && btor_bvprop_is_fixed (g_mm, d_y))
@@ -2110,6 +2169,9 @@ ult_bvprop (uint32_t bw)
                    0,
                    true,
                    res);
+        assert (
+            !res
+            || check_synth (d_x, d_y, d_z, 0, res_z, TEST_BVPROP_ULT, 0, 0));
 
         if (btor_bvprop_is_fixed (g_mm, d_x)
             && btor_bvprop_is_fixed (g_mm, d_y))
@@ -2190,6 +2252,9 @@ udiv_bvprop (uint32_t bw)
                    0,
                    true,
                    res);
+        assert (
+            !res
+            || check_synth (d_x, d_y, d_z, 0, res_z, TEST_BVPROP_UDIV, 0, 0));
 
         if (btor_bvprop_is_fixed (g_mm, d_x)
             && btor_bvprop_is_fixed (g_mm, d_y))
@@ -2270,6 +2335,9 @@ urem_bvprop (uint32_t bw)
                    0,
                    true,
                    res);
+        assert (
+            !res
+            || check_synth (d_x, d_y, d_z, 0, res_z, TEST_BVPROP_UREM, 0, 0));
 
         if (btor_bvprop_is_fixed (g_mm, d_x)
             && btor_bvprop_is_fixed (g_mm, d_y))

@@ -925,7 +925,7 @@ btor_bvprop_srl_const (BtorMemMgr *mm,
   return bvprop_shift_const_aux (mm, d_x, d_z, n, res_d_x, res_d_z, true);
 }
 
-bool
+static bool
 bvprop_shift_aux (BtorMemMgr *mm,
                   BtorBvDomain *d_x,
                   BtorBvDomain *d_y,
