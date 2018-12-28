@@ -1012,7 +1012,7 @@ bvprop_shift_aux (BtorMemMgr *mm,
       d = btor_bvprop_new_init (mm, bw);
     BTOR_PUSH_STACK (d_ite_stack, d);
     /* shift width */
-    bv = btor_bv_uint64_to_bv (mm, 1 << i, log2_bw);
+    bv = btor_bv_uint64_to_bv (mm, 1u << i, log2_bw);
     BTOR_PUSH_STACK (shift_stack, bv);
   }
 
@@ -1026,8 +1026,10 @@ bvprop_shift_aux (BtorMemMgr *mm,
   tmp_z = btor_bvprop_new (mm, d_z->lo, d_z->hi);
 
   tmp_x_bit = new_domain (mm);
-  tmp_x_bit->lo = btor_bv_uint64_to_bv(mm, btor_bv_get_bit (d_x->lo, 0), 1);
-  tmp_x_bit->hi = btor_bv_uint64_to_bv(mm, btor_bv_get_bit (d_x->hi, 0), 1);
+  tmp_x_bit->lo = btor_bv_uint64_to_bv (
+      mm, btor_bv_get_bit (d_x->lo, is_srl ? bw - 1 : 0), 1);
+  tmp_x_bit->hi = btor_bv_uint64_to_bv (
+      mm, btor_bv_get_bit (d_x->hi, is_srl ? bw - 1 : 0), 1);
 
   tmp_eq_z = btor_bvprop_new_init (mm, 1);
   tmp_eq_x_bit = btor_bvprop_new_init (mm, 1);
@@ -1303,6 +1305,9 @@ DONE:
   BTOR_RELEASE_STACK (d_shift_stack);
   BTOR_RELEASE_STACK (d_ite_stack);
   BTOR_RELEASE_STACK (shift_stack);
+  btor_bvprop_free (mm, tmp_x_bit);
+  btor_bvprop_free (mm, tmp_eq_z);
+  btor_bvprop_free (mm, tmp_eq_x_bit);
   btor_bvprop_free (mm, tmp_zero);
   btor_bvprop_free (mm, tmp_zero_bw);
   btor_bvprop_free (mm, tmp_one);
