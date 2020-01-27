@@ -1581,7 +1581,7 @@ boolector_main (int32_t argc, char **argv)
   {
     assert (boolector_get_opt (btor, BTOR_OPT_MODEL_GEN));
     val = g_app->options[BTORMAIN_OPT_SMT2_MODEL].val;
-    boolector_print_model (btor, val ? "smt2" : "btor", g_app->outfile);
+    //boolector_print_model (btor, val ? "smt2" : "btor", g_app->outfile);
   }
 
 DONE:
